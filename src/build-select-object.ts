@@ -13,8 +13,10 @@ type FieldSelectAll<T, TDepth extends number> = TDepth extends 0
 type ItemSelectAll<T, TDepth extends number> = Unwrap<T> extends ZodObject<infer TShape, any>
 	? ObjectSelectAll<TShape, TDepth>
 	: Unwrap<T> extends ZodUnion<infer TOptions>
-		? UnionShape<TOptions> extends infer TShape extends ZodRawShape ? ObjectSelectAll<TShape, TDepth> : true
+		? [NotObject<TOptions[number]>] extends [never] ? UnionShape<TOptions> extends infer TShape extends ZodRawShape ? ObjectSelectAll<TShape, TDepth> : true : true
 		: true;
+type NotObject<T> = T extends unknown ? Unwrap<T> extends ZodObject<any, any> ? never : T : never;
+
 type ObjectSelectAll<TShape extends ZodRawShape, TDepth extends number> = { [K in keyof TShape]-?: FieldSelectAll<TShape[K], TDepth> };
 
 interface SelectObject { [key: string]: SelectObject | true }
@@ -30,7 +32,7 @@ type Unwrap<T> = T extends ZodCatch<infer I> | ZodDefault<infer I> | ZodNullable
 	? Unwrap<I>
 	: T extends ZodLazy<infer I> ? Unwrap<I> : T;
 
-/** What {@link buildSelectObject} answers: nested for objects, unions with an object variant, and arrays of either; `true` for anything else. */
+/** What {@link buildSelectObject} answers: nested for objects, unions of objects, and arrays of either; `true` for anything else. */
 export type ZodSelectAll<T extends ZodType<object> | ZodUnion> = Unwrap<T> extends ZodObject<infer TShape, any>
 	? ObjectSelectAll<TShape, 10>
 	: { [K in keyof ZodSelect<T, true>]-?: true };
@@ -40,9 +42,10 @@ export type ZodSelectAll<T extends ZodType<object> | ZodUnion> = Unwrap<T> exten
  *
  * Every scalar key is set to `true`. Nested object fields, and arrays of
  * objects, are recursively expanded into nested select objects. A union field
- * with an object variant, such as a file stored as an id and read as the file,
- * expands into the merged keys of its object variants. Other arrays and
- * records remain `true`.
+ * whose every variant is an object expands into their merged keys. A union
+ * with any other variant, such as a name that is a string or a structured
+ * name, remains `true`: its sub-fields would miss the plain value. Other arrays
+ * and records remain `true`.
  * For union schemas the result is the merged set of keys across all variants.
  *
  * @example
@@ -91,7 +94,7 @@ function collectKeys(schema: ZodType, result: Record<string, SelectValue>, depth
 			const field = unwrapField(schema.shape[key]);
 			const fieldInner = isZodArray(field) ? unwrapField(field.def.element as ZodType) : field;
 
-			if (isZodObject(fieldInner) || hasObjectVariant(fieldInner)) {
+			if (isZodObject(fieldInner) || isUnionOfObjects(fieldInner)) {
 				const nested: Record<string, SelectValue> = {};
 				collectKeys(fieldInner, nested, depth + 1);
 				result[key] = nested;
@@ -109,6 +112,6 @@ function collectKeys(schema: ZodType, result: Record<string, SelectValue>, depth
 	}
 }
 
-function hasObjectVariant(schema: ZodType): boolean {
-	return isZodUnion(schema) && schema.options.some(option => isZodObject(unwrapField(option)));
+function isUnionOfObjects(schema: ZodType): boolean {
+	return isZodUnion(schema) && schema.options.every(option => isZodObject(unwrapField(option)));
 }
