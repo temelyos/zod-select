@@ -179,14 +179,68 @@ describe('.buildSelectObject()', () => {
 		const schema = z.object({
 			byKey: z.record(z.string(), z.object({ id: z.string() })),
 			matrix: z.array(z.array(z.number())),
-			options: z.array(z.union([z.object({ a: z.string() }), z.object({ b: z.string() })])),
 			tags: z.array(z.string())
 		});
 		const select = buildSelectObject(schema);
-		const isTyped: IsEqual<typeof select, { byKey: true, matrix: true, options: true, tags: true }> = true;
+		const isTyped: IsEqual<typeof select, { byKey: true, matrix: true, tags: true }> = true;
 
 		assert.ok(isTyped);
-		assert.deepStrictEqual(select, { byKey: true, matrix: true, options: true, tags: true });
+		assert.deepStrictEqual(select, { byKey: true, matrix: true, tags: true });
+	});
+
+	it('should expand a union field into the keys of its object variants', () => {
+		const schema = z.object({
+			file: z.union([z.object({ _id: z.string(), filename: z.string() }), z.string()]),
+			name: z.string()
+		});
+		const select = buildSelectObject(schema);
+		const isTyped: IsEqual<typeof select, { file: { _id: true, filename: true }, name: true }> = true;
+
+		assert.ok(isTyped);
+		assert.deepStrictEqual(select, { file: { _id: true, filename: true }, name: true });
+	});
+
+	it('should merge the keys of every object variant of a union field', () => {
+		const schema = z.object({
+			party: z.union([z.object({ name: z.string(), type: z.literal('company') }), z.object({ first: z.string(), type: z.literal('person') })]).optional()
+		});
+		const select = buildSelectObject(schema);
+		const isTyped: IsEqual<typeof select, { party: { first: true, name: true, type: true } }> = true;
+
+		assert.ok(isTyped);
+		assert.deepStrictEqual(select, { party: { first: true, name: true, type: true } });
+	});
+
+	it('should not expand a union field with no object variant', () => {
+		const schema = z.object({ value: z.union([z.string(), z.number()]).nullable() });
+		const select = buildSelectObject(schema);
+		const isTyped: IsEqual<typeof select, { value: true }> = true;
+
+		assert.ok(isTyped);
+		assert.deepStrictEqual(select, { value: true });
+	});
+
+	it('should expand an array of a union of objects', () => {
+		const schema = z.object({
+			options: z.array(z.union([z.object({ a: z.string() }), z.object({ b: z.string() })]))
+		});
+		const select = buildSelectObject(schema);
+		const isTyped: IsEqual<typeof select, { options: { a: true, b: true } }> = true;
+
+		assert.ok(isTyped);
+		assert.deepStrictEqual(select, { options: { a: true, b: true } });
+	});
+
+	it('should expand an attachment whose file is stored as an id and read as the file', () => {
+		const file = z.object({ _id: z.string(), contentType: z.string().optional(), filename: z.string() });
+		const revision = z.object({ file: z.union([file, z.string()]), uploadedBy: z.object({ _id: z.string(), username: z.string() }) });
+		const schema = z.object({ attachments: z.array(revision.extend({ history: z.array(revision).optional(), title: z.string().optional() })).optional() });
+		const select = buildSelectObject(schema);
+		const revisionSelect = { file: { _id: true, contentType: true, filename: true }, uploadedBy: { _id: true, username: true } } as const;
+		const isTyped: IsEqual<typeof select, { attachments: { file: { _id: true, contentType: true, filename: true }, history: { file: { _id: true, contentType: true, filename: true }, uploadedBy: { _id: true, username: true } }, title: true, uploadedBy: { _id: true, username: true } } }> = true;
+
+		assert.ok(isTyped);
+		assert.deepStrictEqual(select, { attachments: { ...revisionSelect, history: revisionSelect, title: true } });
 	});
 
 	it('should be a select the schema accepts', () => {
