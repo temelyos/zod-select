@@ -3,6 +3,8 @@ import { describe, it } from 'node:test';
 import { z } from 'zod';
 
 import { buildSelectObject } from './build-select-object.js';
+import { ZodSelect } from './select.js';
+import { IsEqual } from './types.js';
 
 describe('.buildSelectObject()', () => {
 	it('should return all keys set to true for a flat object', () => {
@@ -122,13 +124,79 @@ describe('.buildSelectObject()', () => {
 		assert.deepStrictEqual(buildSelectObject(schema), { name: true, tags: true });
 	});
 
-	it('should not expand arrays of objects', () => {
+	it('should expand the items of an array of objects', () => {
 		const schema = z.object({
 			items: z.array(z.object({ id: z.string(), value: z.number() })),
 			name: z.string()
 		});
+		const select = buildSelectObject(schema);
+		const isTyped: IsEqual<typeof select, { items: { id: true, value: true }, name: true }> = true;
 
-		assert.deepStrictEqual(buildSelectObject(schema), { items: true, name: true });
+		assert.ok(isTyped);
+		assert.deepStrictEqual(select, { items: { id: true, value: true }, name: true });
+	});
+
+	it('should expand an optional array of optional objects', () => {
+		const schema = z.object({
+			items: z.array(z.object({ id: z.string() }).optional()).optional()
+		});
+		const select = buildSelectObject(schema);
+		const isTyped: IsEqual<typeof select, { items: { id: true } }> = true;
+
+		assert.ok(isTyped);
+		assert.deepStrictEqual(select, { items: { id: true } });
+	});
+
+	it('should expand arrays of objects inside arrays of objects', () => {
+		const schema = z.object({
+			attachments: z.array(z.object({
+				history: z.array(z.object({ note: z.string(), uploadedBy: z.object({ _id: z.string(), username: z.string() }) })),
+				title: z.string()
+			}))
+		});
+		const select = buildSelectObject(schema);
+		const isTyped: IsEqual<typeof select, { attachments: { history: { note: true, uploadedBy: { _id: true, username: true } }, title: true } }> = true;
+
+		assert.ok(isTyped);
+		assert.deepStrictEqual(select, {
+			attachments: { history: { note: true, uploadedBy: { _id: true, username: true } }, title: true }
+		});
+	});
+
+	it('should type nested objects as nested selects', () => {
+		const schema = z.object({
+			client: z.object({ _id: z.string(), name: z.string() }).optional(),
+			title: z.string()
+		});
+		const select = buildSelectObject(schema);
+		const isTyped: IsEqual<typeof select, { client: { _id: true, name: true }, title: true }> = true;
+
+		assert.ok(isTyped);
+		assert.deepStrictEqual(select, { client: { _id: true, name: true }, title: true });
+	});
+
+	it('should not expand records, or arrays of anything but objects', () => {
+		const schema = z.object({
+			byKey: z.record(z.string(), z.object({ id: z.string() })),
+			matrix: z.array(z.array(z.number())),
+			options: z.array(z.union([z.object({ a: z.string() }), z.object({ b: z.string() })])),
+			tags: z.array(z.string())
+		});
+		const select = buildSelectObject(schema);
+		const isTyped: IsEqual<typeof select, { byKey: true, matrix: true, options: true, tags: true }> = true;
+
+		assert.ok(isTyped);
+		assert.deepStrictEqual(select, { byKey: true, matrix: true, options: true, tags: true });
+	});
+
+	it('should be a select the schema accepts', () => {
+		const schema = z.object({
+			client: z.object({ _id: z.string(), name: z.string() }),
+			items: z.array(z.object({ id: z.string() }))
+		});
+		const select: ZodSelect<typeof schema, true> = buildSelectObject(schema);
+
+		assert.deepStrictEqual(select, { client: { _id: true, name: true }, items: { id: true } });
 	});
 
 	it('should handle recursive schemas without infinite loop', () => {
