@@ -446,3 +446,62 @@ describe('.refineSchema()', () => {
 		deepStrictEqual(selected.map(s => refined.parse(s).stage), stage.options);
 	});
 });
+
+describe('.refineSchema() literal and unknown field types', () => {
+	// Regression tests for `Zodify` (refine-schema.ts) when a schema's fields are listed
+	// (e.g. via `buildSelectObject`) instead of selected whole. Before the fix a numeric
+	// literal union widened to `number` and a required `z.unknown()` field became
+	// optional, so the selected type no longer fit the source type. Runtime was
+	// unaffected; these assignments fail the type-check (`tsc`).
+	const question = z.object({
+		answer: z.object({ value: z.unknown() }),
+		flag: z.literal(true),
+		note: z.unknown().optional(),
+		scale: z.union([z.literal(5), z.literal(10)]),
+		steps: z.literal([3, 7]),
+		value: z.unknown()
+	});
+
+	const survey = z.object({
+		name: z.string(),
+		pages: z.array(z.object({ questions: z.array(question) }))
+	});
+
+	type Question = z.infer<typeof question>;
+
+	it('keeps a numeric literal union instead of widening it to number', () => {
+		const refined = refineSchema(survey, { pages: { questions: { scale: true, steps: true } } });
+		type Selected = z.infer<typeof refined>['pages'][number]['questions'][number];
+
+		// With the bug these resolve to `number`, so the source type can't take them.
+		const scale: Question['scale'] = ({} as Selected).scale;
+		const steps: Question['steps'] = ({} as Selected).steps;
+		void scale;
+		void steps;
+
+		const parsed = refined.parse({ pages: [{ questions: [{ scale: 10, steps: 3 }] }] });
+		assert.equal(parsed.pages[0]?.questions[0]?.scale, 10);
+		throws(() => refined.parse({ pages: [{ questions: [{ scale: 7, steps: 3 }] }] }), ZodError);
+	});
+
+	it('keeps a boolean literal instead of widening it to boolean', () => {
+		const refined = refineSchema(survey, { pages: { questions: { flag: true } } });
+
+		type Selected = z.infer<typeof refined>['pages'][number]['questions'][number];
+
+		const isFlag: Question['flag'] = ({} as Selected).flag;
+		void isFlag;
+
+		throws(() => refined.parse({ pages: [{ questions: [{ flag: false }] }] }), ZodError);
+	});
+
+	it('keeps a required unknown field required', () => {
+		const refined = refineSchema(survey, { pages: { questions: { answer: true, note: true, value: true } } });
+
+		// With the bug `value` became an optional key; `note` must stay optional.
+		const selected: z.infer<typeof refined>['pages'][number]['questions'][number] = { answer: { value: 1 }, value: 'x' };
+		const questions: Pick<Question, 'answer' | 'note' | 'value'>[] = [selected];
+
+		deepStrictEqual(refined.parse({ pages: [{ questions }] }).pages[0]?.questions, questions);
+	});
+});

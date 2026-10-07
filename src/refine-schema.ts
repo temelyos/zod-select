@@ -7,12 +7,14 @@ type ApplyOptionalNullable<T, U extends ZodType> =
 	IsAny<
 		T,
 		U,
-		undefined extends T
-			? null extends T
-				? ZodOptional<ZodNullable<U>>
-				: ZodOptional<U>
-			: null extends T ? ZodNullable<U>
-				: U
+		// `unknown` already admits null/undefined; wrapping it would make a required key optional.
+		unknown extends T ? U
+			: undefined extends T
+				? null extends T
+					? ZodOptional<ZodNullable<U>>
+					: ZodOptional<U>
+				: null extends T ? ZodNullable<U>
+					: U
 	>;
 
 type DepthLimit = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
@@ -26,8 +28,8 @@ type InternalZodify<T, TDepth extends number = 0> =
 
 			T extends string
 				? string extends T ? ZodString : ZodLiteral<T>
-				: T extends number ? ZodNumber
-					: T extends boolean ? ZodBoolean
+				: T extends number ? number extends T ? ZodNumber : ZodLiteral<T>
+					: T extends boolean ? boolean extends T ? ZodBoolean : ZodLiteral<T>
 						: T extends Date ? ZodDate
 							: unknown extends T ? ZodUnknown
 								: T extends Array<infer U> ? ZodArray<Zodify<U, NextDepth<TDepth>>>
@@ -92,7 +94,7 @@ export type RefinedTypeSchema<T extends object, TShape, TDepth extends number = 
 				: TShape[K] extends ZodType ? TShape[K]
 
 					// Keep the original type
-					: TShape[K] extends boolean ? Zodify<T[K]>
+					: TShape[K] extends boolean ? ZodifyField<T, K>
 
 						: TShape[K] extends object
 						// Handle array of nested objects
@@ -229,21 +231,36 @@ export type Zodify<T, TDepth extends number = 0> =
 			T,
 			ZodAny,
 
-			// A pure string-literal union becomes one multi-value ZodLiteral. Routing it
-			// through TuplifyUnion instead would spend one recursion level per option and
-			// silently drop options past the depth cap (a 12-option enum kept only 9).
-			[Exclude<T, null | undefined>] extends [string]
-				? string extends Exclude<T, null | undefined>
-					? ZodString
-					: ZodLiteral<Exclude<T, null | undefined>>
-
-				: IsTuple<
+			ZodifyLiteral<
+				Exclude<T, null | undefined>,
+				IsTuple<
 					TuplifyUnion<Exclude<T, null | undefined>, TDepth>,
 					ZodUnion<TuplifyUnion<Exclude<T, null | undefined>, TDepth>>,
 					InternalZodify<Exclude<T, null | undefined>, TDepth>
 				>
+			>
 		>
 	>;
+
+// Zodify a field, keeping an optional `unknown`/`any` key optional: those types already
+// admit undefined, so the key's optionality can't be read from the value type.
+type ZodifyField<T, TKey extends keyof T> =
+	unknown extends T[TKey]
+		? Partial<Pick<T, TKey>> extends Pick<T, TKey> ? ZodOptional<Zodify<T[TKey]>> : Zodify<T[TKey]>
+		: Zodify<T[TKey]>;
+
+// A union of string/number/boolean literals becomes one multi-value ZodLiteral. Routing it
+// through TuplifyUnion instead would spend one recursion level per option (silently
+// dropping options past the depth cap: a 12-option enum kept only 9) and widen each
+// number/boolean literal. Wide `string`/`number`/`boolean` keep their plain schema;
+// anything else (objects, mixed wide unions) falls through to TElse.
+type ZodifyLiteral<T, TElse> =
+	[T] extends [boolean | number | string]
+		? [T] extends [boolean] ? boolean extends T ? ZodBoolean : ZodLiteral<T>
+			: string extends T ? [T] extends [string] ? ZodString : TElse
+				: number extends T ? [T] extends [number] ? ZodNumber : TElse
+					: ZodLiteral<T>
+		: TElse;
 
 // Main function to refine the schema
 export function refineSchema<
