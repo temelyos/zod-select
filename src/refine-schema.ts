@@ -99,15 +99,14 @@ export type RefinedTypeSchema<T extends object, TShape, TDepth extends number = 
 						: TShape[K] extends object
 						// Handle array of nested objects
 							? Exclude<T[K], null | undefined> extends Array<infer U>
-								? [U] extends [object]
-									? ApplyOptionalNullable<T[K], z.ZodArray<RefinedVariants<U, TShape[K], NextDepth<TDepth>>>>
+								? [Extract<U, object>] extends [never]
+									? Zodify<T[K]>
+									: ApplyOptionalNullable<T[K], z.ZodArray<RefinedVariants<Extract<U, object>, TShape[K], NextDepth<TDepth>>>>
 
-								// Keep original if array items are not objects
-									: Zodify<T[K]>
-
-								: Exclude<T[K], null | undefined> extends object
-									? ApplyOptionalNullable<T[K], RefinedVariants<Exclude<T[K], null | undefined>, TShape[K], NextDepth<TDepth>>>
-									: ZodNever
+								// A nested select reads the object variants, of a union with a plain one too
+								: [Extract<Exclude<T[K], null | undefined>, object>] extends [never]
+									? ZodNever
+									: ApplyOptionalNullable<T[K], RefinedVariants<Extract<Exclude<T[K], null | undefined>, object>, TShape[K], NextDepth<TDepth>>>
 							: ZodNever;
 		}, core.$strict> : any;
 
@@ -164,8 +163,9 @@ type RefineType<T, TIsSimple extends boolean> =
 	IsTuple<
 		TuplifyUnion<Exclude<T, null | undefined>>,
 
-		([Exclude<Exclude<T, null | undefined>, object>] extends [never] ? RefineObject<Extract<Exclude<T, null | undefined>, object>, TIsSimple> : never) // A union whose every variant is an object can be selected into, variant by variant. One with
-		// a plain variant cannot: a nested select would miss the plain value.
+		// A union's object variants can be selected into, variant by variant: an effect read by kind,
+		// or a joined id read as its record. Selecting into a union with a plain variant misses it.
+		([Extract<Exclude<T, null | undefined>, object>] extends [never] ? never : RefineObject<Extract<Exclude<T, null | undefined>, object>, TIsSimple>)
 		| Refinement<Zodify<T>, TIsSimple>,
 
 		Exclude<T, null | undefined> extends string ? Refinement<ApplyOptionalNullable<T, ZodString>, TIsSimple>
@@ -173,9 +173,9 @@ type RefineType<T, TIsSimple extends boolean> =
 				: Exclude<T, null | undefined> extends boolean ? Refinement<ApplyOptionalNullable<T, ZodBoolean>, TIsSimple>
 					: Exclude<T, null | undefined> extends Date ? Refinement<ApplyOptionalNullable<T, ZodDate>, TIsSimple>
 						: Exclude<T, null | undefined> extends Array<infer U>
-							? Exclude<U, null | undefined> extends object
-								? Refinement<Zodify<T>, TIsSimple> | RefineObject<Extract<U, object>, TIsSimple>
-								: Refinement<Zodify<T>, TIsSimple>
+							? [Extract<U, object>] extends [never]
+								? Refinement<Zodify<T>, TIsSimple>
+								: Refinement<Zodify<T>, TIsSimple> | RefineObject<Extract<U, object>, TIsSimple>
 							: Exclude<T, null | undefined> extends object
 								? IsJsonType<
 									Exclude<T, null | undefined>,
