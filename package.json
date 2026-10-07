@@ -1,6 +1,6 @@
 {
 	"name": "zodselect",
-	"version": "1.2.4",
+	"version": "1.2.5",
 	"description": "Type-safe selection utility built on top of Zod. Allows for strongly typed field selection, schema merging, and runtime refinement for frontend or backend use.",
 	"author": "SecureDataSystems",
 	"license": "MIT",
