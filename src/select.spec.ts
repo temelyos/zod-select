@@ -120,10 +120,27 @@ describe('a field whose value is a union of objects', () => {
 		});
 	});
 
-	it('still refuses a nested select into a union with a plain variant, which would miss the plain value', () => {
-		// @ts-expect-error `name` may be a string, so only the whole value can be selected.
-		const select: ZodSelect<typeof policy, true> = { name: { en: true } };
+	it('accepts a nested select into the object variants of a union with a plain one, as a join read as its record is', () => {
+		const select = { name: { en: true } } as const satisfies ZodSelect<typeof policy, true>;
+		const isTyped: IsEqual<InferType<typeof policy, typeof select>['name'], { en: string }> = true;
 
-		assert.ok(select);
+		assert.ok(isTyped);
+		assert.deepEqual(refineSchema(policy, select).parse({ name: { en: 'Software' } }), { name: { en: 'Software' } });
+	});
+
+	it('accepts the select a screen builds by declaring a joined id as its record', () => {
+		const file = z.object({ _id: z.string(), filename: z.string() });
+		const attachment = z.object({ file: z.union([file, z.string()]), title: z.string().optional() });
+		const stored = z.object({ attachments: z.array(attachment).optional() });
+		const read = z.object({ attachments: z.array(attachment.extend({ file })).optional() });
+		const select: ZodSelect<typeof stored, true> = buildSelectObject(read);
+		const isTyped: IsEqual<
+			InferType<typeof stored, { attachments: { file: { _id: true, filename: true }, title: true } }>['attachments'],
+			undefined | { file: { _id: string, filename: string }, title?: string }[]
+		> = true;
+
+		assert.ok(isTyped);
+		assert.deepEqual(select, { attachments: { file: { _id: true, filename: true }, title: true } });
+		assert.deepEqual(refineSchema(stored, select).parse({ attachments: [{ file: { _id: 'f1', filename: 'a.pdf' } }] }), { attachments: [{ file: { _id: 'f1', filename: 'a.pdf' } }] });
 	});
 });
