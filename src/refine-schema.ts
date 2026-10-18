@@ -88,7 +88,7 @@ export type RefinedTypeSchema<T extends object, TShape, TDepth extends number = 
 		? ZodObject<{
 			[K in keyof T & keyof TShape]:
 			// Use the result of the refinement function
-			TShape[K] extends (schema: infer S) => ZodType ? ReturnType<TShape[K]>
+			TShape[K] extends (schema: infer _S) => ZodType ? ReturnType<TShape[K]>
 
 				// Use the redefined ZodType if provided
 				: TShape[K] extends ZodType ? TShape[K]
@@ -208,7 +208,7 @@ export type RefineZodUnion<T extends ZodUnion> =
 // The depth cap spends one level per union MEMBER, so members past nine are dropped. Pure
 // string-literal unions (enums) bypass this via the ZodLiteral shortcut in Zodify; the cap
 // cannot simply be removed — unbounded recursion trips TS2589 in generic contexts.
-// eslint-disable-next-line @typescript-eslint/naming-convention
+// eslint-disable-next-line @temelyos/naming-convention
 export type TuplifyUnion<T, TDepth extends number = 0, L = LastOf<T>, N = [T] extends [never] ? true : false> =
 	TDepth extends 9 ? [] // Stop recursion at depth 9
 		: true extends N ? []
