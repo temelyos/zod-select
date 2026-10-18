@@ -1,7 +1,7 @@
 import { core, z, ZodAny, ZodArray, ZodBoolean, ZodDate, ZodLiteral, ZodNever, ZodNullable, ZodNumber, ZodObject, ZodOptional, ZodRawShape, ZodString, ZodTuple, ZodType, ZodUnion, ZodUnknown } from 'zod';
 
 import { IsAny, IsJsonType, Mutable } from './types.js';
-import { getInnerType, isZodArray, isZodNullable, isZodObject, isZodOptional, isZodType, isZodUnion } from './utilities.js';
+import { isZodArray, isZodCatch, isZodDefault, isZodLazy, isZodNullable, isZodObject, isZodOptional, isZodType, isZodUnion } from './utilities.js';
 
 type ApplyOptionalNullable<T, U extends ZodType> =
 	IsAny<
@@ -316,13 +316,11 @@ function refineSchemaField<T extends ZodType, TShape>(fieldSchema: T, fieldShape
 		return refineSchemaField(fieldSchema.def.innerType, fieldShape).optional();
 	} else if (isZodNullable(fieldSchema)) {
 		return refineSchemaField(fieldSchema.def.innerType, fieldShape).nullable();
-	} else {
-		const innerType = getInnerType(fieldSchema);
-
-		// There are wrapper types we can't forward because the underlying object structures are changing.
-		if (innerType !== fieldSchema) {
-			return refineSchemaField(innerType, fieldShape);
-		}
+	} else if (isZodDefault(fieldSchema) || isZodCatch(fieldSchema)) {
+		// A default or catch is a whole value, which a picked part no longer fits, so it gives way to what it wraps.
+		return refineSchemaField(fieldSchema.def.innerType, fieldShape);
+	} else if (isZodLazy(fieldSchema)) {
+		return refineSchemaField(fieldSchema.def.getter() as ZodType, fieldShape);
 	}
 
 	return fieldSchema;
