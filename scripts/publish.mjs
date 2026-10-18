@@ -1,5 +1,5 @@
 import { promisify } from 'node:util';
-import { exec } from 'node:child_process';
+import { exec, spawnSync } from 'node:child_process';
 import { cwd } from 'node:process';
 import { readFileSync } from 'node:fs';
 
@@ -28,7 +28,10 @@ console.log(`Package Version: ${packageJson.version}`);
 
 if (packageJson.version !== publishdVersion) {
 	console.log('Publishing...');
-	await promisify(exec)('pnpm publish --access public');
+	// Attached to the terminal, so npm can ask for a one-time password or a browser sign-in.
+	const { status } = spawnSync('pnpm publish --access public', { shell: true, stdio: 'inherit' });
+
+	if (status !== 0) process.exit(status ?? 1);
 } else {
 	console.log('Skipping Publish.');
 }

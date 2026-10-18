@@ -28,18 +28,19 @@
 		"build": "node scripts/build.mjs && tsc --project tsconfig.build.json",
 		"clean": "node scripts/clean.mjs",
 		"deploy": "npm run build && node ./scripts/publish.mjs",
-		"lint": "eslint . --c eslint.config.mjs",
-		"lint:fix": "eslint . --c eslint.config.mjs --fix",
+		"lint": "oxlint",
+		"lint:fix": "node scripts/lint-fix.mjs",
 		"prune": "node scripts/prune.mjs",
 		"test": "tsx --tsconfig ./tsconfig.build.json --test ./src/**/*.{spec,test}.ts ./test/**/*.{spec,test}.ts"
 	},
 	"devDependencies": {
-		"@temelyos/eslint-config": "^1.0.38",
+		"@temelyos/oxlint-config": "^1.0.0",
 		"@temelyos/tsconfig": "^1.0.6",
 		"@types/node": "^26.1.1",
+		"oxlint": "^1.88.0",
+		"oxlint-tsgolint": "^7.0.2004",
 		"tsx": "^4.23.1",
-		"typescript": "npm:@typescript/typescript6@^6.0.2",
-		"typescript-native": "npm:typescript@^7.0.2"
+		"typescript": "^7.0.2"
 	},
 	"dependencies": {
 		"zod": "^4.4.3"
