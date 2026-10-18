@@ -160,6 +160,22 @@ describe('.refineSchema()', () => {
 		assert.equal(parsedWithoutNestedArray.nestedArray, undefined);
 	});
 
+	it('keeps an array under a default, a catch or a lazy an array of the picked fields', () => {
+		const line = z.object({ id: z.string(), secret: z.string() });
+		const order = z.object({
+			caught: z.array(line).catch([]),
+			defaulted: z.array(line).default([]),
+			lazy: z.lazy(() => z.array(line))
+		});
+
+		const refined = refineSchema(order, { caught: { id: true }, defaulted: { id: true }, lazy: { id: true } });
+		const lines = [{ id: 'a', secret: 's' }];
+
+		deepStrictEqual(refined.parse({ caught: lines, defaulted: lines, lazy: lines }), { caught: [{ id: 'a' }], defaulted: [{ id: 'a' }], lazy: [{ id: 'a' }] });
+		assert.ok(refined.shape.defaulted instanceof z.ZodArray);
+		assert.ok(refined.shape.caught instanceof z.ZodArray);
+	});
+
 	it('should handle custom fields', () => {
 		interface Address {
 			city: string,

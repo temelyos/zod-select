@@ -25,6 +25,14 @@ export function isZodArray(obj: unknown): obj is ZodArray<ZodType> {
 	return isZodType(obj) && (obj.def.type === 'array');
 }
 
+export function isZodCatch(obj: unknown): obj is ZodCatch<ZodType> {
+	return isZodType(obj) && (obj.def.type === 'catch');
+}
+
+export function isZodDefault(obj: unknown): obj is ZodDefault<ZodType> {
+	return isZodType(obj) && (obj.def.type === 'default');
+}
+
 export function isZodLazy(obj: unknown): obj is ZodLazy {
 	return isZodType(obj) && (obj.def.type === 'lazy');
 }
