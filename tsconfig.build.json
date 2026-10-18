@@ -1,6 +1,7 @@
 {
 	"extends": "@temelyos/tsconfig/tsconfig.build.json",
 	"include": ["src"],
+	"exclude": ["src/**/*.spec.ts", "src/**/*.test.ts"],
 	"compilerOptions": {
 		"module": "Node16",
 		"outDir": "dist",
