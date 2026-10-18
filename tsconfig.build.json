@@ -1,6 +1,8 @@
 {
 	"extends": "@temelyos/tsconfig/tsconfig.build.json",
 	"include": ["src"],
+	// the shared tsconfig's spec exclude resolves against its own folder, so it never matches here
+	"exclude": ["src/**/*.spec.ts", "src/**/*.test.ts"],
 	"compilerOptions": {
 		"module": "Node16",
 		"outDir": "dist",
