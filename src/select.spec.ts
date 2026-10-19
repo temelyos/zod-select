@@ -144,3 +144,25 @@ describe('a field whose value is a union of objects', () => {
 		assert.deepEqual(refineSchema(stored, select).parse({ attachments: [{ file: { _id: 'f1', filename: 'a.pdf' } }] }), { attachments: [{ file: { _id: 'f1', filename: 'a.pdf' } }] });
 	});
 });
+describe('InferMergedType with a tuple', () => {
+	it('merges a field optional on both sides as it does a required one, keeping undefined', () => {
+		const order = z.strictObject({
+			_id: z.string(),
+			closedAt: z.date().optional(),
+			lines: z.array(z.strictObject({ note: z.string(), sku: z.string() })).optional(),
+			route: z.strictObject({ _id: z.string(), key: z.string(), name: z.string() }).optional()
+		});
+		const orderPart = z.strictObject({
+			closedAt: z.date().optional(),
+			lines: z.array(z.strictObject({ sku: z.string() })).optional(),
+			route: z.strictObject({ _id: z.string() }).optional()
+		});
+		type Merged = InferMergedType<typeof order, [typeof orderPart, { _id: true, closedAt: true, lines: { note: true }, route: { _id: true, key: true } }]>;
+
+		const isMerged: IsEqual<
+			{ [K in keyof Merged]: Merged[K] },
+			{ _id: string, closedAt: Date | undefined, lines: undefined | { note: string, sku: string }[], route: undefined | { _id: string, key: string } }
+		> = true;
+		assert.ok(isMerged);
+	});
+});
