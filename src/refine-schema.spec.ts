@@ -2,7 +2,7 @@ import { strict as assert, deepStrictEqual, throws } from 'assert';
 import { describe, it } from 'node:test';
 import { z, ZodError } from 'zod';
 
-import { refineSchema, type RefineSchema } from './refine-schema.js';
+import { refineSchema, type RefineSchema, refineSchemaUnchecked } from './refine-schema.js';
 
 describe('.refineSchema()', () => {
 	it('should retain required fields', () => {
@@ -176,19 +176,27 @@ describe('.refineSchema()', () => {
 		assert.ok(refined.shape.caught instanceof z.ZodArray);
 	});
 
-	it('refuses a field the schema does not have, at any depth and beside valid ones', () => {
+	it('refuses a field the schema does not have as a type error, at any depth and beside valid ones', () => {
 		const user = z.object({ name: z.string(), roles: z.array(z.object({ title: z.string() })).optional() });
 		const party = z.union([z.object({ kind: z.literal('entity'), name: z.string() }), z.object({ kind: z.literal('user'), username: z.string() })]);
 
 		// @ts-expect-error a misspelt field beside a valid one
-		throws(() => refineSchema(user, { name: true, nmae: true }), /no field 'nmae'/);
+		refineSchema(user, { name: true, nmae: true });
 		// @ts-expect-error a misspelt field inside an array of objects
-		throws(() => refineSchema(user, { roles: { titel: true } }), /no field 'roles.titel'/);
+		refineSchema(user, { roles: { titel: true } });
 		// @ts-expect-error a field no option of the union has
-		throws(() => refineSchema(party, { email: true, kind: true }), /no field 'email'/);
+		refineSchema(party, { email: true, kind: true });
 
 		// A field of one option is a field of the union.
 		assert.ok(refineSchema(party, { kind: true, username: true }));
+	});
+
+	it('takes a shape built generically through refineSchemaUnchecked', () => {
+		function refineBy<T extends z.ZodObject>(schema: T, shape: RefineSchema<T, false>) {
+			return refineSchemaUnchecked(schema, shape);
+		}
+
+		deepStrictEqual(refineBy(z.object({ age: z.number(), name: z.string() }), { name: true }).parse({ age: 3, name: 'n' }), { name: 'n' });
 	});
 
 	it('types the refined object as stripping the fields it was not given', () => {

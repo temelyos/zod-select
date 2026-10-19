@@ -1,7 +1,7 @@
 import { core, z, ZodAny, ZodArray, ZodBoolean, ZodDate, ZodLiteral, ZodNever, ZodNullable, ZodNumber, ZodObject, ZodOptional, ZodRawShape, ZodString, ZodTuple, ZodType, ZodUnion, ZodUnknown } from 'zod';
 
 import { IsAny, IsJsonType, Mutable } from './types.js';
-import { getInnerType, isZodArray, isZodCatch, isZodDefault, isZodLazy, isZodNullable, isZodObject, isZodOptional, isZodType, isZodUnion } from './utilities.js';
+import { isZodArray, isZodCatch, isZodDefault, isZodLazy, isZodNullable, isZodObject, isZodOptional, isZodType, isZodUnion } from './utilities.js';
 
 type ApplyOptionalNullable<T, U extends ZodType> =
 	IsAny<
@@ -285,43 +285,7 @@ type ZodifyLiteral<T, TElse> =
 					: ZodLiteral<T>
 		: TElse;
 
-/** Throws on a key of `shape` that none of `schemas` declares, at any depth, through wrappers, arrays and the options of a union. */
-function assertKnownKeys(schemas: core.$ZodType[], shape: object, path: string): void {
-	const shapes = schemas.flatMap(shapesOf);
-
-	for (const [key, value] of Object.entries(shape)) {
-		const fields = shapes.flatMap(fieldShape => (Object.hasOwn(fieldShape, key) ? [fieldShape[key]!] : []));
-		if (fields.length === 0) throw new Error(`refineSchema: the schema has no field '${path}${key}' to select.`);
-		if (isSelectObject(value)) assertKnownKeys(fields, value, `${path}${key}.`);
-	}
-}
-
-function isSelectObject(value: unknown): value is object {
-	return typeof value === 'object' && value !== null && !isZodType(value);
-}
-
-function refine<TShape>(schema: ZodType, shape: TShape): ZodType {
-	if (isZodObject(schema)) {
-		const refinedShape: Mutable<ZodRawShape> = {};
-		const schemaShape = schema.shape;
-
-		for (const key in shape) {
-			if (key in schemaShape && shape[key] !== false) {
-				refinedShape[key] = refineSchemaField(schemaShape[key], shape[key]);
-			}
-		}
-
-		return z.object(refinedShape);
-	} else if (isZodUnion(schema)) {
-		const refinedOptions = schema.options.map(option => refineSchemaField(option, shape));
-
-		return z.union(refinedOptions as [ZodType, ...ZodType[]]);
-	}
-
-	throw new Error('Unsupported schema type for refinement');
-}
-
-// Main function to refine the schema
+/** `shape`'s fields of `schema`. A key the schema doesn't have, at any depth, is a type error. */
 export function refineSchema<
 	T extends ZodType<object> | ZodUnion,
 	TShape extends RefineSchema<T, false>
@@ -329,9 +293,7 @@ export function refineSchema<
 	schema: T,
 	shape: TShape & Exact<TShape, z.infer<T>>
 ): RefinedSchema<T, TShape, false> {
-	assertKnownKeys([schema], shape, '');
-
-	return refine(schema, shape) as RefinedSchema<T, TShape, false>;
+	return refineSchemaUnchecked(schema, shape);
 }
 
 // Helper function to refine a single schema field
@@ -343,9 +305,9 @@ function refineSchemaField<T extends ZodType, TShape>(fieldSchema: T, fieldShape
 	} else if (isZodType(fieldShape)) {
 		return fieldShape; // Use redefined type
 	} else if (isZodObject(fieldSchema)) {
-		return refine(fieldSchema, fieldShape); // Recursively refine nested objects
+		return refineSchemaUnchecked(fieldSchema, fieldShape as any); // Recursively refine nested objects
 	} else if (isZodUnion(fieldSchema)) {
-		return refine(fieldSchema, fieldShape);
+		return refineSchemaUnchecked(fieldSchema, fieldShape as any);
 	} else if (isZodArray(fieldSchema)) {
 		// Recursively refine array items
 		return z.array(
@@ -365,10 +327,33 @@ function refineSchemaField<T extends ZodType, TShape>(fieldSchema: T, fieldShape
 	return fieldSchema;
 }
 
-function shapesOf(schema: core.$ZodType): ZodRawShape[] {
-	const inner = getInnerType(schema as ZodType);
-	if (isZodObject(inner)) return [inner.shape];
-	if (isZodUnion(inner)) return (inner.options as ZodType[]).flatMap(shapesOf);
+/**
+ * {@link refineSchema} for a shape whose type is still generic, which the exact key check can't evaluate.
+ * Prefer {@link refineSchema}: a key the schema doesn't have is skipped here, not refused.
+ */
+export function refineSchemaUnchecked<
+	T extends ZodType<object> | ZodUnion,
+	TShape extends RefineSchema<T, false>
+>(
+	schema: T,
+	shape: TShape
+): RefinedSchema<T, TShape, false> {
+	if (isZodObject(schema)) {
+		const refinedShape: Mutable<ZodRawShape> = {};
+		const schemaShape = schema.shape;
 
-	return [];
+		for (const key in shape) {
+			if (key in schemaShape && shape[key] !== false) {
+				refinedShape[key] = refineSchemaField(schemaShape[key], shape[key]);
+			}
+		}
+
+		return z.object(refinedShape) as RefinedSchema<T, TShape, false>;
+	} else if (isZodUnion(schema)) {
+		const refinedOptions = schema.options.map(option => refineSchemaField(option, shape));
+
+		return z.union(refinedOptions as any) as RefinedSchema<T, TShape, false>;
+	}
+
+	throw new Error('Unsupported schema type for refinement');
 }
