@@ -28,6 +28,9 @@ type Exact<TShape, T> = {
 		: never
 };
 
+/** What {@link refineSchema} takes for `T`: `TShape`, with a key `T` doesn't have, at any depth, a type error even beside valid keys. */
+export type ExactRefineSchema<T extends ZodType<object> | ZodUnion, TShape> = TShape & Exact<TShape, z.infer<T>>;
+
 /** What the field `TKey` holds in any object of `T`. */
 type FieldAt<T, TKey> = T extends unknown ? TKey extends keyof T ? T[TKey] : never : never;
 
@@ -148,6 +151,9 @@ export type RefinedUnionSchema<T extends ZodUnion, TShape> = ZodUnion<
 			: never
 		: never
 >;
+
+/** The value of the fields of `T` that `TShape` picks: the output of {@link RefinedTypeSchema}. */
+export type RefinedValue<T extends object, TShape> = z.output<RefinedTypeSchema<T, TShape>>;
 
 /** One refined schema per variant of a union of objects (a plain object is its own one variant), so the result narrows by variant. */
 type RefinedVariants<T, TShape, TDepth extends number> = T extends object ? RefinedTypeSchema<T, TShape, TDepth> : never;
@@ -291,7 +297,7 @@ export function refineSchema<
 	TShape extends RefineSchema<T, false>
 >(
 	schema: T,
-	shape: TShape & Exact<TShape, z.infer<T>>
+	shape: ExactRefineSchema<T, TShape>
 ): RefinedSchema<T, TShape, false> {
 	return refineSchemaUnchecked(schema, shape);
 }
