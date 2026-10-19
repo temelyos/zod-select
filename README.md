@@ -139,6 +139,14 @@ const schema = refineSchema(UserSchema, {
 }
 ```
 
+A field the schema doesn't have is a type error, at any depth and even beside valid fields:
+
+```ts
+refineSchema(UserSchema, { firstName: true, lastNmae: true }); // ✖ 'lastNmae' is not a field of UserSchema
+```
+
+Code that builds a selection generically, whose type the check can't evaluate, calls `refineSchemaUnchecked` instead: the same refinement, with a field the schema doesn't have skipped.
+
 ---
 
 ## 🧪 Refine Field Types Inline

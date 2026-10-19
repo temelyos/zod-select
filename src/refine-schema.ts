@@ -19,6 +19,24 @@ type ApplyOptionalNullable<T, U extends ZodType> =
 
 type DepthLimit = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
+/** `TShape` with every key `T` doesn't have, at any depth, as `never`, so a misspelt select is a type error even beside valid keys. */
+type Exact<TShape, T> = {
+	[K in keyof TShape]: K extends FieldKeys<T>
+		? TShape[K] extends ((schema: never) => unknown) | boolean | ZodType ? TShape[K]
+			: TShape[K] extends object ? Exact<TShape[K], FieldObjects<FieldAt<T, K>>>
+				: TShape[K]
+		: never
+};
+
+/** What the field `TKey` holds in any object of `T`. */
+type FieldAt<T, TKey> = T extends unknown ? TKey extends keyof T ? T[TKey] : never : never;
+
+/** The declared keys of every object in `T`, each of a union's own. */
+type FieldKeys<T> = T extends unknown ? Extract<keyof { [K in keyof T as string extends K ? never : number extends K ? never : K]: unknown }, string> : never;
+
+/** The objects a field of type `T` holds, through arrays: what a nested select picks within. */
+type FieldObjects<T> = T extends readonly (infer E)[] ? FieldObjects<E> : T extends Date ? never : T extends object ? T : never;
+
 // Recursive type to map a TypeScript type to a Zod schema
 type InternalZodify<T, TDepth extends number = 0> =
 	TDepth extends 9 ? ZodType
@@ -108,7 +126,7 @@ export type RefinedTypeSchema<T extends object, TShape, TDepth extends number = 
 									? ZodNever
 									: ApplyOptionalNullable<T[K], RefinedVariants<Extract<Exclude<T[K], null | undefined>, object>, TShape[K], NextDepth<TDepth>>>
 							: ZodNever;
-		}, core.$strict> : any;
+		}, core.$strip> : any;
 
 export type RefinedUnionSchema<T extends ZodUnion, TShape> = ZodUnion<
 	T['options'] extends Readonly<[infer A, ...infer Rest]>
@@ -267,8 +285,53 @@ type ZodifyLiteral<T, TElse> =
 					: ZodLiteral<T>
 		: TElse;
 
-// Main function to refine the schema
+/** `shape`'s fields of `schema`. A key the schema doesn't have, at any depth, is a type error. */
 export function refineSchema<
+	T extends ZodType<object> | ZodUnion,
+	TShape extends RefineSchema<T, false>
+>(
+	schema: T,
+	shape: TShape & Exact<TShape, z.infer<T>>
+): RefinedSchema<T, TShape, false> {
+	return refineSchemaUnchecked(schema, shape);
+}
+
+// Helper function to refine a single schema field
+function refineSchemaField<T extends ZodType, TShape>(fieldSchema: T, fieldShape: TShape): ZodType {
+	if (fieldShape === true) {
+		return fieldSchema; // Keep original type
+	} else if (typeof fieldShape === 'function') {
+		return fieldShape(fieldSchema); // Apply refinement function
+	} else if (isZodType(fieldShape)) {
+		return fieldShape; // Use redefined type
+	} else if (isZodObject(fieldSchema)) {
+		return refineSchemaUnchecked(fieldSchema, fieldShape as any); // Recursively refine nested objects
+	} else if (isZodUnion(fieldSchema)) {
+		return refineSchemaUnchecked(fieldSchema, fieldShape as any);
+	} else if (isZodArray(fieldSchema)) {
+		// Recursively refine array items
+		return z.array(
+			refineSchemaField(fieldSchema.element, fieldShape)
+		);
+	} else if (isZodOptional(fieldSchema)) {
+		return refineSchemaField(fieldSchema.def.innerType, fieldShape).optional();
+	} else if (isZodNullable(fieldSchema)) {
+		return refineSchemaField(fieldSchema.def.innerType, fieldShape).nullable();
+	} else if (isZodDefault(fieldSchema) || isZodCatch(fieldSchema)) {
+		// A default or catch is a whole value, which a picked part no longer fits, so it gives way to what it wraps.
+		return refineSchemaField(fieldSchema.def.innerType, fieldShape);
+	} else if (isZodLazy(fieldSchema)) {
+		return refineSchemaField(fieldSchema.def.getter() as ZodType, fieldShape);
+	}
+
+	return fieldSchema;
+}
+
+/**
+ * {@link refineSchema} for a shape whose type is still generic, which the exact key check can't evaluate.
+ * Prefer {@link refineSchema}: a key the schema doesn't have is skipped here, not refused.
+ */
+export function refineSchemaUnchecked<
 	T extends ZodType<object> | ZodUnion,
 	TShape extends RefineSchema<T, false>
 >(
@@ -293,35 +356,4 @@ export function refineSchema<
 	}
 
 	throw new Error('Unsupported schema type for refinement');
-}
-
-// Helper function to refine a single schema field
-function refineSchemaField<T extends ZodType, TShape>(fieldSchema: T, fieldShape: TShape): ZodType {
-	if (fieldShape === true) {
-		return fieldSchema; // Keep original type
-	} else if (typeof fieldShape === 'function') {
-		return fieldShape(fieldSchema); // Apply refinement function
-	} else if (isZodType(fieldShape)) {
-		return fieldShape; // Use redefined type
-	} else if (isZodObject(fieldSchema)) {
-		return refineSchema(fieldSchema, fieldShape as any); // Recursively refine nested objects
-	} else if (isZodUnion(fieldSchema)) {
-		return refineSchema(fieldSchema, fieldShape as any);
-	} else if (isZodArray(fieldSchema)) {
-		// Recursively refine array items
-		return z.array(
-			refineSchemaField(fieldSchema.element, fieldShape)
-		);
-	} else if (isZodOptional(fieldSchema)) {
-		return refineSchemaField(fieldSchema.def.innerType, fieldShape).optional();
-	} else if (isZodNullable(fieldSchema)) {
-		return refineSchemaField(fieldSchema.def.innerType, fieldShape).nullable();
-	} else if (isZodDefault(fieldSchema) || isZodCatch(fieldSchema)) {
-		// A default or catch is a whole value, which a picked part no longer fits, so it gives way to what it wraps.
-		return refineSchemaField(fieldSchema.def.innerType, fieldShape);
-	} else if (isZodLazy(fieldSchema)) {
-		return refineSchemaField(fieldSchema.def.getter() as ZodType, fieldShape);
-	}
-
-	return fieldSchema;
 }
