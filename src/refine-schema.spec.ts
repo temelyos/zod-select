@@ -2,7 +2,7 @@ import { strict as assert, deepStrictEqual, throws } from 'assert';
 import { describe, it } from 'node:test';
 import { z, ZodError } from 'zod';
 
-import { refineSchema, type RefineSchema, refineSchemaUnchecked } from './refine-schema.js';
+import { type ExactRefineSchema, type RefinedValue, refineSchema, type RefineSchema, refineSchemaUnchecked } from './refine-schema.js';
 
 describe('.refineSchema()', () => {
 	it('should retain required fields', () => {
@@ -189,6 +189,20 @@ describe('.refineSchema()', () => {
 
 		// A field of one option is a field of the union.
 		assert.ok(refineSchema(party, { kind: true, username: true }));
+	});
+
+	it('exports the exact shape it takes and the value it picks, as types', () => {
+		const user = z.object({ name: z.string(), roles: z.array(z.object({ level: z.number(), title: z.string() })).optional() });
+		interface Shape { roles: { title: true } }
+
+		const shape: ExactRefineSchema<typeof user, Shape> = { roles: { title: true } };
+		// @ts-expect-error a misspelt field is not part of the exact shape
+		const misspelt: ExactRefineSchema<typeof user, { nmae: true }> = { nmae: true };
+		void misspelt;
+
+		const value: RefinedValue<z.output<typeof user>, Shape> = refineSchema(user, shape).parse({ name: 'n', roles: [{ level: 1, title: 't' }] });
+		const picked: { roles?: { title: string }[] } = value;
+		deepStrictEqual(picked, { roles: [{ title: 't' }] });
 	});
 
 	it('takes a shape built generically through refineSchemaUnchecked', () => {
