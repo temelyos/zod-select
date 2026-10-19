@@ -1,11 +1,11 @@
+/**
+ * `U` merged into `T`, as types: keys in both merge deeply when both sides are objects, and by their elements when
+ * both are arrays, kept `null` or `undefined` where a side may be; otherwise they widen to `T[K] | U[K]`.
+ */
 export type DeepMerge<T, U> = {
 	[K in keyof T | keyof U]: K extends keyof T
 		? K extends keyof U
-			? T[K] extends object
-				? U[K] extends object
-					? DeepMerge<T[K], U[K]>
-					: T[K] | U[K]
-				: T[K] | U[K]
+			? DeepMergeValue<T[K], U[K]>
 			: T[K]
 		: K extends keyof U
 			? U[K]
@@ -19,6 +19,18 @@ export type DeepMergeAll<T> = T extends readonly any[]
 			: DeepMerge<First, DeepMergeAll<Rest>>
 		: unknown
 	: T;
+
+type DeepMergeValue<T, U> = [NonNullable<T>, NonNullable<U>] extends [infer A, infer B]
+	? [A] extends [never] ? T | U
+		: [B] extends [never] ? T | U
+			: [Extract<A | B, ((...args: never[]) => unknown) | Date>] extends [never]
+				? [A, B] extends [readonly (infer AItem)[], readonly (infer BItem)[]]
+					? DeepMergeValue<AItem, BItem>[] | Extract<T | U, null | undefined>
+					: [A, B] extends [object, object]
+						? [Extract<A | B, readonly unknown[]>] extends [never] ? DeepMerge<A, B> | Extract<T | U, null | undefined> : T | U
+						: T | U
+				: T | U
+	: never;
 
 export type IsAny<T, TTrue = true, TFalse = false> = 0 extends (1 & T) ? TTrue : TFalse;
 
