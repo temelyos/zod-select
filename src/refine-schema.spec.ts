@@ -176,6 +176,29 @@ describe('.refineSchema()', () => {
 		assert.ok(refined.shape.caught instanceof z.ZodArray);
 	});
 
+	it('refuses a field the schema does not have, at any depth and beside valid ones', () => {
+		const user = z.object({ name: z.string(), roles: z.array(z.object({ title: z.string() })).optional() });
+		const party = z.union([z.object({ kind: z.literal('entity'), name: z.string() }), z.object({ kind: z.literal('user'), username: z.string() })]);
+
+		// @ts-expect-error a misspelt field beside a valid one
+		throws(() => refineSchema(user, { name: true, nmae: true }), /no field 'nmae'/);
+		// @ts-expect-error a misspelt field inside an array of objects
+		throws(() => refineSchema(user, { roles: { titel: true } }), /no field 'roles.titel'/);
+		// @ts-expect-error a field no option of the union has
+		throws(() => refineSchema(party, { email: true, kind: true }), /no field 'email'/);
+
+		// A field of one option is a field of the union.
+		assert.ok(refineSchema(party, { kind: true, username: true }));
+	});
+
+	it('types the refined object as stripping the fields it was not given', () => {
+		const refined = refineSchema(z.object({ age: z.number(), name: z.string() }), { name: true });
+		const strips: typeof refined extends z.ZodObject<z.ZodRawShape, infer TConfig> ? TConfig : never = {} as z.core.$strip;
+		void strips;
+
+		deepStrictEqual(refined.parse({ age: 3, name: 'n' }), { name: 'n' });
+	});
+
 	it('should handle custom fields', () => {
 		interface Address {
 			city: string,
@@ -300,7 +323,6 @@ describe('.refineSchema()', () => {
 		});
 
 		const schema = refineSchema(z.union([person, z.string()]), {
-			address: true,
 			firstName: true
 		});
 
