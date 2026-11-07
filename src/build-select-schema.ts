@@ -40,6 +40,10 @@ function buildSelect(
 		const shape: Record<string, Clause | ZodLazy<Clause>> = {};
 		let select: BasicSelect;
 
+		// Stands in for this object while its fields are built, so a field that comes back to it, as a getter can,
+		// resolves. It is only read once parsing starts, after `result` below is set.
+		cache.set(schema, z.lazy(() => result));
+
 		for (const key in schema.shape) {
 			shape[key] = buildSelect(schema.shape[key], cache);
 		}
@@ -50,7 +54,7 @@ function buildSelect(
 			select = select.strict();
 		}
 
-		const result = z.union([z.boolean(), select]).optional();
+		const result: Clause = z.union([z.boolean(), select]).optional();
 
 		cache.set(schema, result);
 
@@ -102,45 +106,47 @@ function buildSelect(
 	}
 
 	if (types) {
-		const hasLazy = types.some(item => isZodLazy(item));
-
-		if (hasLazy) {
-			return z.lazy(() => {
-				return buildSelectMerge(types, cache);
-			});
-		}
-
-		return buildSelectMerge(types, cache);
+		return mergeSelects(types.map(type => buildSelect(type, cache)));
 	}
 
 	return z.boolean().optional();
 }
 
-function buildSelectMerge(types: ZodType[], cache: Map<ZodType, Clause | ZodLazy<Clause>>): Clause {
-	const shape: Record<string, Clause | ZodLazy<Clause>> = {};
+export function buildSelectSchema<T extends ZodType<object> | ZodUnion>(schema: T): ZodType<ZodSelect<T, true>, ZodSelect<T, true>> {
+	const result = buildSelect(schema);
+
+	if (isZodLazy(result)) {
+		return (result.def.getter().def.innerType as ZodUnion).def.options[1] as ZodType<ZodSelect<T, true>, ZodSelect<T, true>>;
+	}
+
+	return (result.def.innerType as ZodUnion).def.options[1] as ZodType<ZodSelect<T, true>, ZodSelect<T, true>>;
+}
+
+/** A select for a value of any of the clauses' types: their object selects' keys, a key two of them share merged in turn. */
+function mergeClauses(clauses: Clause[]): Clause {
+	const keySelects: Record<string, (Clause | ZodLazy<Clause>)[]> = {};
 	let isStrict = false;
 
-	for (const cur of types) {
-		const select = buildSelect(cur, cache);
-		let clause: Clause;
-
-		if (isZodLazy(select)) {
-			clause = select.def.getter();
-		} else {
-			clause = select;
-		}
-
+	for (const clause of clauses) {
 		if (clause.def.innerType.def.type === 'union') {
 			const obj = getInnerType(clause.def.innerType.def.options[1]) as ZodObject;
 
 			for (const key in obj.shape) {
-				shape[key] = obj.shape[key];
+				(keySelects[key] ??= []).push(obj.shape[key]);
 			}
 
 			if (!isZodObjectLoose(obj)) {
 				isStrict = true;
 			}
 		}
+	}
+
+	const shape: Record<string, Clause | ZodLazy<Clause>> = {};
+
+	for (const [key, selects] of Object.entries(keySelects)) {
+		const distinct = [...new Set(selects)];
+
+		shape[key] = (distinct.length === 1) ? distinct[0]! : mergeKeySelects(distinct);
 	}
 
 	let result = z.object(shape);
@@ -152,12 +158,22 @@ function buildSelectMerge(types: ZodType[], cache: Map<ZodType, Clause | ZodLazy
 	return z.union([z.boolean(), result]).optional();
 }
 
-export function buildSelectSchema<T extends ZodType<object> | ZodUnion>(schema: T): ZodType<ZodSelect<T, true>, ZodSelect<T, true>> {
-	const result = buildSelect(schema);
+/** The selects of one key that several variants share: a plain boolean when none selects into an object. */
+function mergeKeySelects(selects: (Clause | ZodLazy<Clause>)[]): Clause | ZodLazy<Clause> {
+	const isNested = (select: Clause | ZodLazy<Clause>) => isZodLazy(select) || (select.def.innerType.def.type === 'union');
 
-	if (isZodLazy(result)) {
-		return (result.def.getter().def.innerType as ZodUnion).def.options[1] as ZodType<ZodSelect<T, true>, ZodSelect<T, true>>;
+	if (!selects.some(isNested)) {
+		return selects[0]!;
 	}
 
-	return (result.def.innerType as ZodUnion).def.options[1] as ZodType<ZodSelect<T, true>, ZodSelect<T, true>>;
+	return mergeSelects(selects.filter(isNested));
+}
+
+/** Selects merged into one, lazily when any is lazy, as a recursive one may not be built yet. */
+function mergeSelects(selects: (Clause | ZodLazy<Clause>)[]): Clause | ZodLazy<Clause> {
+	if (selects.some(select => isZodLazy(select))) {
+		return z.lazy(() => mergeClauses(selects.map(select => (isZodLazy(select) ? select.def.getter() : select))));
+	}
+
+	return mergeClauses(selects as Clause[]);
 }

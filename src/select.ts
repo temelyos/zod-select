@@ -1,7 +1,7 @@
 import { z, ZodTuple, ZodType, ZodUnion } from 'zod';
 
 import { RefinedTypeSchema, RefinedUnionSchema, RefineObject, RefineZodTuple, RefineZodUnion } from './refine-schema.js';
-import { DeepMergeAll, IsEqual } from './types.js';
+import { DeepMergeAll } from './types.js';
 
 export type InferMergedType<
 	T extends ZodType<object> | ZodUnion,
@@ -46,16 +46,11 @@ export type MergeSelect<
 	TSelect2 extends undefined
 		// [defined, undefined]
 		? [TSelect1, T]
-		: IsEqual<
-			TSelect2,
-			T,
-			TSelect1,
-			TSelect2 extends [ZodSelect<T>, ...ZodSelect<T>[]]
-				// [defined, [defined]]
-				? [TSelect1, ...TSelect2]
-				// [defined, defined]
-				: [TSelect1, TSelect2]
-		>;
+		: TSelect2 extends [ZodSelect<T>, ...ZodSelect<T>[]]
+			// [defined, [defined]]
+			? [TSelect1, ...TSelect2]
+			// [defined, defined], the schema itself included
+			: [TSelect1, TSelect2];
 
 export type MultiSelect<T extends ZodType<object> | ZodUnion> =
 	[ZodSelect<T>, ...ZodSelect<T>[]] | undefined | ZodSelect<T>;
