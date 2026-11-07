@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { z, ZodError } from 'zod';
 
 import { type ExactRefineSchema, type RefinedValue, refineSchema, type RefineSchema, refineSchemaUnchecked } from './refine-schema.js';
+import { type IsEqual } from './types.js';
 
 describe('.refineSchema()', () => {
 	it('should retain required fields', () => {
@@ -563,5 +564,75 @@ describe('.refineSchema() literal and unknown field types', () => {
 		const questions: Pick<Question, 'answer' | 'note' | 'value'>[] = [selected];
 
 		deepStrictEqual(refined.parse({ pages: [{ questions }] }).pages[0]?.questions, questions);
+	});
+});
+
+describe('.refineSchema() through other wrappers', () => {
+	const address = () => z.object({ city: z.string(), secret: z.string() });
+	const input = { addr: { city: 'Austin', secret: 's' } };
+
+	it('should pick within a readonly object', () => {
+		const schema = z.object({ addr: address().readonly() });
+		const refined = refineSchema(schema, { addr: { city: true } });
+
+		deepStrictEqual(refined.parse(input), { addr: { city: 'Austin' } });
+		assert.ok(Object.isFrozen(refined.parse(input).addr));
+
+		const isTyped: IsEqual<z.output<typeof refined>, { addr: { city: string } }> = true;
+		assert.ok(isTyped);
+	});
+
+	it('should pick within a readonly array of objects', () => {
+		const schema = z.object({ addr: z.array(address()).readonly() });
+		const refined = refineSchema(schema, { addr: { city: true } });
+
+		deepStrictEqual(refined.parse({ addr: [input.addr] }), { addr: [{ city: 'Austin' }] });
+	});
+
+	it('should pick within a prefault object', () => {
+		const schema = z.object({ addr: address().prefault({ city: 'x', secret: 'y' }) });
+		const refined = refineSchema(schema, { addr: { city: true } });
+
+		deepStrictEqual(refined.parse(input), { addr: { city: 'Austin' } });
+	});
+
+	it('should pick within a nonoptional object', () => {
+		const schema = z.object({ addr: address().optional().nonoptional() });
+		const refined = refineSchema(schema, { addr: { city: true } });
+
+		deepStrictEqual(refined.parse(input), { addr: { city: 'Austin' } });
+		throws(() => refined.parse({}), ZodError);
+	});
+
+	it('should pick within the output of a pipe into an object', () => {
+		const schema = z.object({ addr: z.preprocess(value => value, address()) });
+		const refined = refineSchema(schema, { addr: { city: true } });
+
+		deepStrictEqual(refined.parse(input), { addr: { city: 'Austin' } });
+	});
+
+	it('should refuse to pick within a transformed object, rather than return all of it', () => {
+		const schema = z.object({ addr: address().transform(value => value) });
+
+		throws(() => refineSchema(schema, { addr: { city: true } }), /transform/);
+	});
+
+	it('should keep a transformed plain variant of a refined union', () => {
+		const schema = z.union([z.object({ a: z.string(), b: z.string() }), z.string().transform(value => value.length)]);
+		const refined = refineSchemaUnchecked(schema, { a: true });
+
+		deepStrictEqual(refined.parse({ a: 'x', b: 'y' }), { a: 'x' });
+		assert.equal(refined.parse('abc'), 3);
+	});
+});
+
+describe('.refineSchemaUnchecked() with inherited key names', () => {
+	it('should skip keys only found on the object prototype', () => {
+		const schema = z.object({ a: z.string() });
+		const shape = { a: true, constructor: true, hasOwnProperty: true, toString: true } as unknown as RefineSchema<typeof schema, false>;
+		const refined = refineSchemaUnchecked(schema, shape);
+
+		deepStrictEqual(Object.keys(refined.shape), ['a']);
+		deepStrictEqual(refined.parse({ a: 'x' }), { a: 'x' });
 	});
 });

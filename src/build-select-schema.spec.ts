@@ -362,3 +362,69 @@ describe('.buildSelectSchema()', () => {
 		void nested;
 	});
 });
+
+describe('.buildSelectSchema() regressions', () => {
+	it('should handle recursion written with getters', () => {
+		const category = z.object({
+			get children() {
+				return z.array(category);
+			},
+			name: z.string()
+		});
+		const select = buildSelectSchema(category);
+
+		assert.ok(select.safeParse({ children: { children: { name: true }, name: true }, name: true }).success);
+		assert.ok(!select.safeParse({ children: { bogus: true } }).success);
+	});
+
+	it('should handle getter recursion through a union', () => {
+		const node = z.object({
+			name: z.string(),
+			get parent() {
+				return z.union([node, z.null()]);
+			}
+		});
+		const select = buildSelectSchema(node);
+
+		assert.ok(select.safeParse({ name: true, parent: { name: true, parent: { name: true } } }).success);
+		assert.ok(!select.safeParse({ parent: { bogus: true } }).success);
+	});
+
+	it('should accept a nested select into any union variant that shares the key', () => {
+		const schema = z.union([
+			z.object({ kind: z.literal('a'), meta: z.object({ a: z.string() }) }),
+			z.object({ kind: z.literal('b'), meta: z.object({ b: z.string() }) })
+		]);
+		const select = buildSelectSchema(schema);
+
+		assert.ok(select.safeParse({ meta: { a: true } }).success);
+		assert.ok(select.safeParse({ meta: { b: true } }).success);
+		assert.ok(select.safeParse({ meta: { a: true, b: true } }).success);
+		assert.ok(!select.safeParse({ meta: { c: true } }).success);
+	});
+
+	it('should accept a nested select into either side of an intersection that shares the key', () => {
+		const schema = z.intersection(
+			z.object({ m: z.object({ a: z.string() }) }),
+			z.object({ m: z.object({ b: z.string() }) })
+		);
+		const select = buildSelectSchema(schema);
+
+		assert.ok(select.safeParse({ m: { a: true, b: true } }).success);
+		assert.ok(!select.safeParse({ m: { c: true } }).success);
+	});
+
+	it('should accept a nested select through readonly, prefault, nonoptional and pipe wrappers', () => {
+		const address = () => z.object({ city: z.string(), zip: z.string() });
+		const schema = z.object({
+			nonOptional: address().optional().nonoptional(),
+			piped: z.preprocess(value => value, address()),
+			prefault: address().prefault({ city: 'x', zip: 'y' }),
+			readonly: address().readonly()
+		});
+		const select = buildSelectSchema(schema);
+
+		assert.ok(select.safeParse({ nonOptional: { city: true }, piped: { city: true }, prefault: { city: true }, readonly: { city: true } }).success);
+		assert.ok(!select.safeParse({ readonly: { bogus: true } }).success);
+	});
+});

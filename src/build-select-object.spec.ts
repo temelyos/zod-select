@@ -262,3 +262,104 @@ describe('.buildSelectObject()', () => {
 		assert.ok(typeof result.root === 'object' && result.root !== null);
 	});
 });
+
+describe('.buildSelectObject() regressions', () => {
+	const address = () => z.object({ city: z.string(), zip: z.string() });
+
+	it('should expand objects behind readonly, prefault, nonoptional and pipe wrappers', () => {
+		const schema = z.object({
+			nonOptional: address().optional().nonoptional(),
+			piped: z.preprocess(value => value, address()),
+			prefault: address().prefault({ city: 'x', zip: 'y' }),
+			readonly: address().readonly(),
+			readonlyArray: z.array(address()).readonly(),
+			transformed: address().transform(value => value)
+		});
+		const select = buildSelectObject(schema);
+		const all = { city: true, zip: true };
+
+		assert.deepStrictEqual(select, { nonOptional: all, piped: all, prefault: all, readonly: all, readonlyArray: all, transformed: true });
+
+		const isTyped: IsEqual<typeof select, {
+			nonOptional: { city: true, zip: true },
+			piped: { city: true, zip: true },
+			prefault: { city: true, zip: true },
+			readonly: { city: true, zip: true },
+			readonlyArray: { city: true, zip: true },
+			transformed: true
+		}> = true;
+		assert.ok(isTyped);
+	});
+
+	it('should merge a nested object that union variants share, not keep the last', () => {
+		const schema = z.object({
+			item: z.union([
+				z.object({ kind: z.literal('a'), meta: z.object({ a: z.string() }) }),
+				z.object({ kind: z.literal('b'), meta: z.object({ b: z.string() }) })
+			])
+		});
+		const select = buildSelectObject(schema);
+
+		assert.deepStrictEqual(select, { item: { kind: true, meta: { a: true, b: true } } });
+
+		const isTyped: IsEqual<typeof select, { item: { kind: true, meta: { a: true, b: true } } }> = true;
+		assert.ok(isTyped);
+	});
+
+	it('should merge a nested object shared by the variants of a top-level union', () => {
+		const schema = z.union([
+			z.object({ kind: z.literal('a'), meta: z.object({ a: z.string() }) }),
+			z.object({ kind: z.literal('b'), meta: z.object({ b: z.string() }) })
+		]);
+		const select = buildSelectObject(schema);
+
+		assert.deepStrictEqual(select, { kind: true, meta: { a: true, b: true } });
+
+		const isTyped: IsEqual<typeof select, { kind: true, meta: { a: true, b: true } }> = true;
+		assert.ok(isTyped);
+	});
+
+	it('should select a field whole when one union variant holds it as a plain value', () => {
+		const schema = z.union([
+			z.object({ meta: z.object({ a: z.string() }) }),
+			z.object({ meta: z.string() })
+		]);
+		const select = buildSelectObject(schema);
+
+		assert.deepStrictEqual(select, { meta: true });
+
+		const isTyped: IsEqual<typeof select, { meta: true }> = true;
+		assert.ok(isTyped);
+	});
+
+	it('should merge a nested object shared by both sides of an intersection', () => {
+		const schema = z.intersection(
+			z.object({ m: z.object({ a: z.string() }), x: z.string() }),
+			z.object({ m: z.object({ b: z.string() }) })
+		);
+		const select = buildSelectObject(schema);
+
+		assert.deepStrictEqual(select, { m: { a: true, b: true }, x: true });
+
+		const isTyped: IsEqual<typeof select, { m: { a: true, b: true }, x: true }> = true;
+		assert.ok(isTyped);
+	});
+
+	it('should select the remainder whole at the depth limit, as its type says, not select nothing', () => {
+		const level = <T extends z.ZodType>(next: T) => z.object({ next, value: z.string() });
+		const schema = level(level(level(level(level(level(level(level(level(level(level(level(z.string()))))))))))));
+		const select = buildSelectObject(schema);
+
+		let node: unknown = select;
+
+		for (let i = 0; i < 10; i++) {
+			node = (node as { next: unknown }).next;
+		}
+
+		assert.deepStrictEqual(node, { next: true, value: true });
+
+		type Tenth = typeof select['next']['next']['next']['next']['next']['next']['next']['next']['next']['next'];
+		const isTyped: IsEqual<Tenth, { next: true, value: true }> = true;
+		assert.ok(isTyped);
+	});
+});

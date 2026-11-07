@@ -1,7 +1,7 @@
 import { core, z, ZodAny, ZodArray, ZodBoolean, ZodDate, ZodLiteral, ZodNever, ZodNullable, ZodNumber, ZodObject, ZodOptional, ZodRawShape, ZodString, ZodTuple, ZodType, ZodUnion, ZodUnknown } from 'zod';
 
 import { IsAny, IsJsonType, Mutable } from './types.js';
-import { isZodArray, isZodCatch, isZodDefault, isZodLazy, isZodNullable, isZodObject, isZodOptional, isZodType, isZodUnion } from './utilities.js';
+import { getInnerType, isZodArray, isZodCatch, isZodDefault, isZodLazy, isZodNonOptional, isZodNullable, isZodObject, isZodOptional, isZodPipe, isZodPrefault, isZodReadonly, isZodTransform, isZodType, isZodUnion } from './utilities.js';
 
 type ApplyOptionalNullable<T, U extends ZodType> =
 	IsAny<
@@ -119,7 +119,7 @@ export type RefinedTypeSchema<T extends object, TShape, TDepth extends number = 
 
 						: TShape[K] extends object
 						// Handle array of nested objects
-							? Exclude<T[K], null | undefined> extends Array<infer U>
+							? Exclude<T[K], null | undefined> extends ReadonlyArray<infer U>
 								? [Extract<U, object>] extends [never]
 									? Zodify<T[K]>
 									: ApplyOptionalNullable<T[K], z.ZodArray<RefinedVariants<Extract<U, object>, TShape[K], NextDepth<TDepth>>>>
@@ -196,7 +196,7 @@ type RefineType<T, TIsSimple extends boolean> =
 			: Exclude<T, null | undefined> extends number ? Refinement<ApplyOptionalNullable<T, ZodNumber>, TIsSimple>
 				: Exclude<T, null | undefined> extends boolean ? Refinement<ApplyOptionalNullable<T, ZodBoolean>, TIsSimple>
 					: Exclude<T, null | undefined> extends Date ? Refinement<ApplyOptionalNullable<T, ZodDate>, TIsSimple>
-						: Exclude<T, null | undefined> extends Array<infer U>
+						: Exclude<T, null | undefined> extends ReadonlyArray<infer U>
 							? [Extract<U, object>] extends [never]
 								? Refinement<Zodify<T>, TIsSimple>
 								: Refinement<Zodify<T>, TIsSimple> | RefineObject<Extract<U, object>, TIsSimple>
@@ -239,7 +239,7 @@ export type TuplifyUnion<T, TDepth extends number = 0, L = LastOf<T>, N = [T] ex
 			: Push<TuplifyUnion<Exclude<T, L>, NextDepth<TDepth>>, InternalZodify<L>>;
 
 type UnionFieldType<T extends ZodType> =
-	Exclude<z.infer<T>, null | undefined> extends Array<infer U>
+	Exclude<z.infer<T>, null | undefined> extends ReadonlyArray<infer U>
 		? Exclude<U, null | undefined> extends object
 			? boolean | RefineObject<Extract<U, object>, true>
 			: boolean
@@ -291,6 +291,13 @@ type ZodifyLiteral<T, TElse> =
 					: ZodLiteral<T>
 		: TElse;
 
+/** Whether a value of `schema` can be an object, so that a nested select could pick within it. */
+function holdsObject(schema: ZodType): boolean {
+	const inner = getInnerType(schema);
+
+	return isZodObject(inner) || (isZodUnion(inner) && inner.options.some(option => holdsObject(option)));
+}
+
 /** `shape`'s fields of `schema`. A key the schema doesn't have, at any depth, is a type error. */
 export function refineSchema<
 	T extends ZodType<object> | ZodUnion,
@@ -323,9 +330,23 @@ function refineSchemaField<T extends ZodType, TShape>(fieldSchema: T, fieldShape
 		return refineSchemaField(fieldSchema.def.innerType, fieldShape).optional();
 	} else if (isZodNullable(fieldSchema)) {
 		return refineSchemaField(fieldSchema.def.innerType, fieldShape).nullable();
-	} else if (isZodDefault(fieldSchema) || isZodCatch(fieldSchema)) {
+	} else if (isZodDefault(fieldSchema) || isZodPrefault(fieldSchema) || isZodCatch(fieldSchema)) {
 		// A default or catch is a whole value, which a picked part no longer fits, so it gives way to what it wraps.
-		return refineSchemaField(fieldSchema.def.innerType, fieldShape);
+		return refineSchemaField(fieldSchema.def.innerType as ZodType, fieldShape);
+	} else if (isZodNonOptional(fieldSchema)) {
+		return refineSchemaField(fieldSchema.def.innerType as ZodType, fieldShape).nonoptional();
+	} else if (isZodReadonly(fieldSchema)) {
+		return refineSchemaField(fieldSchema.def.innerType as ZodType, fieldShape).readonly();
+	} else if (isZodPipe(fieldSchema)) {
+		if (!isZodTransform(fieldSchema.def.out)) {
+			return (fieldSchema.def.in as ZodType).pipe(refineSchemaField(fieldSchema.def.out as ZodType, fieldShape));
+		}
+
+		// A transform's output has no schema to pick from, and picking its input by the output's keys would feed it
+		// a part it doesn't expect. Kept whole, it would hand back fields that weren't selected, so it is refused.
+		if (holdsObject(fieldSchema.def.in as ZodType)) {
+			throw new Error('Cannot select fields within a transformed object: select it with `true`, or redefine it with a schema or function.');
+		}
 	} else if (isZodLazy(fieldSchema)) {
 		return refineSchemaField(fieldSchema.def.getter() as ZodType, fieldShape);
 	}
@@ -349,7 +370,7 @@ export function refineSchemaUnchecked<
 		const schemaShape = schema.shape;
 
 		for (const key in shape) {
-			if (key in schemaShape && shape[key] !== false) {
+			if (Object.hasOwn(schemaShape, key) && shape[key] !== false) {
 				refinedShape[key] = refineSchemaField(schemaShape[key], shape[key]);
 			}
 		}
