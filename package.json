@@ -31,7 +31,8 @@
 		"lint": "oxlint",
 		"lint:fix": "temelyos-oxlint-fix",
 		"prune": "node scripts/prune.mjs",
-		"test": "tsx --tsconfig ./tsconfig.build.json --test ./src/**/*.{spec,test}.ts ./test/**/*.{spec,test}.ts"
+		"test": "npm run type-check && tsx --tsconfig ./tsconfig.build.json --test ./src/**/*.{spec,test}.ts ./test/**/*.{spec,test}.ts",
+		"type-check": "tsc -p tsconfig.json"
 	},
 	"devDependencies": {
 		"@temelyos/oxlint-config": "^1.1.0",

@@ -195,7 +195,7 @@ describe('InferType with a schema select', () => {
 		assert.ok(isTyped);
 	});
 
-	it('does so within a nested object, keeping it readonly', () => {
+	it('does so within a nested object', () => {
 		const select = z.strictObject({ profile: stored.shape.profile });
 		const isTyped: IsEqual<InferType<typeof found, typeof select>['profile'], { name: string, ssn?: string | undefined }> = true;
 
@@ -229,6 +229,90 @@ describe('InferType with a schema select', () => {
 	it('keeps optional what the select has optional, and a field the model lacks as the select has it', () => {
 		const select = z.strictObject({ _id: z.string().optional(), score: z.number() });
 		const isTyped: IsEqual<InferType<typeof found, typeof select>, { _id?: string | undefined, score: number }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('does so past any depth', () => {
+		const level = <T extends z.ZodType>(inner: T) => z.strictObject({ items: z.array(inner) });
+		const deep = <T extends z.ZodType>(leaf: T) => level(level(level(level(level(level(leaf))))));
+		const model = deep(z.strictObject({ id: z.string(), secret: z.string().optional() }));
+		const select = deep(z.strictObject({ id: z.string(), secret: z.string() }));
+		type Leaf = InferType<typeof model, typeof select>['items'][number]['items'][number]['items'][number]['items'][number]['items'][number]['items'][number];
+		const isTyped: IsEqual<Leaf, { id: string, secret?: string | undefined }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('does so through a recursive schema', () => {
+		interface FoundCategory { children: FoundCategory[], name: string, note?: string }
+		interface StoredCategory { children: StoredCategory[], name: string, note: string }
+		const foundCategory: z.ZodType<FoundCategory> = z.lazy(() => z.strictObject({ children: z.array(foundCategory), name: z.string(), note: z.string().optional() }));
+		const storedCategory: z.ZodType<StoredCategory> = z.lazy(() => z.strictObject({ children: z.array(storedCategory), name: z.string(), note: z.string() }));
+		type Deep = InferType<typeof foundCategory, typeof storedCategory>['children'][number]['children'][number]['children'][number]['children'][number]['children'][number]['children'][number];
+		const isNoteOptional: IsEqual<Pick<Deep, 'name' | 'note'>, { name: string, note?: string | undefined }> = true;
+
+		assert.ok(isNoteOptional);
+	});
+
+	it('does so within the elements of a tuple, a rest element included', () => {
+		const item = z.strictObject({ id: z.string(), secret: z.string().optional() });
+		const storedItem = z.strictObject({ id: z.string(), secret: z.string() });
+		const model = z.strictObject({ pair: z.tuple([item, z.string()]), rest: z.tuple([z.string()], item) });
+		const select = z.strictObject({ pair: z.tuple([storedItem, z.string()]), rest: z.tuple([z.string()], storedItem) });
+		interface Item { id: string, secret?: string | undefined }
+		const isTyped: IsEqual<InferType<typeof model, typeof select>, { pair: [Item, string], rest: [string, ...Item[]] }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('makes optional a field the model holds behind an index signature', () => {
+		const label = z.strictObject({ label: z.string() });
+		const model = z.strictObject({ tags: z.record(z.string(), label) });
+		const select = z.strictObject({ tags: z.strictObject({ urgent: label }) });
+		const isTyped: IsEqual<InferType<typeof model, typeof select>, { tags: { urgent?: undefined | { label: string } } }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('makes optional a field a model variant the select could be read from lacks', () => {
+		const model = z.strictObject({ value: z.union([z.strictObject({ kind: z.literal('a'), x: z.string() }), z.strictObject({ kind: z.literal('b') })]) });
+		const select = z.strictObject({ value: z.strictObject({ x: z.string() }) });
+		const discriminated = z.strictObject({ value: z.strictObject({ kind: z.literal('a'), x: z.string() }) });
+		const isTyped: IsEqual<InferType<typeof model, typeof select>, { value: { x?: string | undefined } }> = true;
+		const isDiscriminated: IsEqual<InferType<typeof model, typeof discriminated>, { value: { kind: 'a', x: string } }> = true;
+
+		assert.ok(isTyped);
+		assert.ok(isDiscriminated);
+	});
+
+	it('keeps undefined that the model allows, an optional nullable and a required field included', () => {
+		const model = z.strictObject({ maybe: z.custom<string | undefined>(), note: z.string().nullable().optional() });
+		const select = z.strictObject({ maybe: z.string(), note: z.string().nullable() });
+		const isTyped: IsEqual<InferType<typeof model, typeof select>, { maybe: string | undefined, note?: null | string | undefined }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('keeps a branded value and a class instance whole', () => {
+		class Money {
+			constructor(readonly amount: number) {}
+
+			format(): string {
+				return this.amount.toFixed(2);
+			}
+		}
+		const model = z.strictObject({ id: z.string(), price: z.strictObject({ amount: z.number().optional() }) });
+		const select = z.strictObject({ id: z.string().brand<'Id'>(), price: z.instanceof(Money) });
+		const isTyped: IsEqual<InferType<typeof model, typeof select>, { id: string & z.BRAND<'Id'>, price: Money }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('merges with an object select', () => {
+		type Merged = InferMergedType<typeof found, [typeof select, { _id: true }]>;
+		const select = z.strictObject({ secret: z.string() });
+		const isTyped: IsEqual<{ [K in keyof Merged]: Merged[K] }, { _id: string, secret: string | undefined }> = true;
 
 		assert.ok(isTyped);
 	});
