@@ -4,7 +4,8 @@ import { RefinedTypeSchema, RefinedUnionSchema, RefineObject, RefineZodTuple, Re
 import { DeepMergeAll, IsAny } from './types.js';
 
 /** The declared keys of every variant of `TModel`; an index signature's are left out. */
-type DeclaredKeys<TModel> = TModel extends unknown ? { [K in keyof TModel]-?: string extends K ? never : number extends K ? never : symbol extends K ? never : K }[keyof TModel] : never;
+// Keys read with `as`: indexing a type that has an index signature by its keys reads only the signature's value
+type DeclaredKeys<TModel> = TModel extends unknown ? keyof { [K in keyof TModel as string extends K ? never : number extends K ? never : symbol extends K ? never : K]: unknown } : never;
 
 export type InferMergedType<
 	T extends ZodType<object> | ZodUnion,
@@ -116,9 +117,9 @@ type PairedVariants<TSelected, TModel> = TModel extends unknown ? [TSelected & T
 type PresentFields<TSelected, TAbsent> = { [K in keyof TSelected as K extends TAbsent ? never : K]: unknown };
 
 /** The declared keys `TModel` has required; an index signature's are left out. */
-type RequiredKeys<TModel> = {
-	[K in keyof TModel]-?: string extends K ? never : number extends K ? never : symbol extends K ? never : undefined extends KeyMap<TModel>[K] ? never : K
-}[keyof TModel];
+type RequiredKeys<TModel> = keyof {
+	[K in keyof TModel as string extends K ? never : number extends K ? never : symbol extends K ? never : undefined extends KeyMap<TModel>[K] ? never : K]: unknown
+};
 
 /** `undefined` when the model allows it; an `any` model allows nothing in particular. */
 type UndefinedIn<T> = IsAny<T, never, undefined extends T ? undefined : never>;

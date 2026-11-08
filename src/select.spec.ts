@@ -266,13 +266,17 @@ describe('InferType with a schema select', () => {
 		assert.ok(isTyped);
 	});
 
-	it('makes optional a field the model holds behind an index signature', () => {
+	it('makes optional a field only an index signature of the model holds, a declared one kept', () => {
 		const label = z.strictObject({ label: z.string() });
 		const model = z.strictObject({ tags: z.record(z.string(), label) });
 		const select = z.strictObject({ tags: z.strictObject({ urgent: label }) });
 		const isTyped: IsEqual<InferType<typeof model, typeof select>, { tags: { urgent?: undefined | { label: string } } }> = true;
+		const loose = z.strictObject({ user: z.looseObject({ _id: z.string() }) });
+		const looseSelect = z.strictObject({ user: z.strictObject({ _id: z.string(), name: z.string() }) });
+		const isLooseTyped: IsEqual<InferType<typeof loose, typeof looseSelect>, { user: { _id: string, name?: string | undefined } }> = true;
 
 		assert.ok(isTyped);
+		assert.ok(isLooseTyped);
 	});
 
 	it('makes optional a field a model variant the select could be read from lacks', () => {
