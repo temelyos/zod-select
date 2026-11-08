@@ -120,7 +120,7 @@ const user = find([
 
 A schema select reads as its own shape, but can't promise more than the schema it selects from, however the select schema was built. Through nested objects, the elements of arrays and tuples, union variants and recursive schemas, at any depth:
 
-- a field the schema may lack is optional: one it has optional, one only its index signature (a record) holds, or one a union variant the select could be read from doesn't have. A select variant is read from the schema's variants its discriminant allows, or from all of them;
+- a field the schema may lack is optional: one it has optional, one only its index signature (a record or loose object) holds, or one a union variant the select could be read from doesn't have. A select variant is read from the schema's variants that its discriminant allows and that have every field it requires, and from any variant no select variant fits;
 - a value the schema allows `undefined` for keeps `undefined`;
 - a field no variant of the schema has reads as the select schema has it, and so do branded values and objects with methods (a `Date`, a class instance), which are kept whole.
 
