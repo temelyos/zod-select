@@ -166,3 +166,105 @@ describe('InferMergedType with a tuple', () => {
 		assert.ok(isMerged);
 	});
 });
+
+describe('InferType with a schema select', () => {
+	const evidenceType = z.strictObject({ _id: z.string(), name: z.string() });
+	const entry = z.strictObject({ at: z.date(), evidence: z.strictObject({ note: z.string(), type: evidenceType }) });
+	const stored = z.strictObject({
+		_id: z.string(),
+		count: z.number(),
+		log: z.array(entry),
+		note: z.string().nullable(),
+		profile: z.strictObject({ name: z.string(), ssn: z.string() }),
+		secret: z.string()
+	});
+	// The model a reader finds: what field access may hide is optional
+	const found = z.strictObject({
+		_id: z.string(),
+		count: z.number().default(0),
+		log: z.array(entry.extend({ evidence: entry.shape.evidence.optional() })),
+		note: z.string().nullable(),
+		profile: z.strictObject({ name: z.string(), ssn: z.string().optional() }).readonly(),
+		secret: z.string().optional()
+	});
+
+	it('keeps a field optional that the model has optional, though the select has it required', () => {
+		const select = z.strictObject({ _id: z.string(), secret: z.string() });
+		const isTyped: IsEqual<InferType<typeof found, typeof select>, { _id: string, secret?: string | undefined }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('does so within a nested object, keeping it readonly', () => {
+		const select = z.strictObject({ profile: stored.shape.profile });
+		const isTyped: IsEqual<InferType<typeof found, typeof select>['profile'], { name: string, ssn?: string | undefined }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('does so within the elements of an array', () => {
+		const select = z.strictObject({ log: stored.shape.log });
+		const isTyped: IsEqual<
+			InferType<typeof found, typeof select>['log'],
+			{ at: Date, evidence?: undefined | { note: string, type: { _id: string, name: string } } }[]
+		> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('does so for a select refined from a stricter schema', () => {
+		const select = refineSchema(stored, { log: { evidence: { type: { _id: true } } } });
+		const isTyped: IsEqual<InferType<typeof found, typeof select>, { log: { evidence?: undefined | { type: { _id: string } } }[] }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('keeps required what the model has required, a default and a nullable included', () => {
+		const select = z.strictObject({ _id: z.string(), count: z.number(), note: z.string().nullable() });
+		const isTyped: IsEqual<InferType<typeof found, typeof select>, { _id: string, count: number, note: null | string }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('keeps optional what the select has optional, and a field the model lacks as the select has it', () => {
+		const select = z.strictObject({ _id: z.string().optional(), score: z.number() });
+		const isTyped: IsEqual<InferType<typeof found, typeof select>, { _id?: string | undefined, score: number }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('reads the model itself as the model', () => {
+		const isTyped: IsEqual<InferType<typeof found, typeof found>, z.infer<typeof found>> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('pairs a union select variant by variant with the model variants its discriminant allows', () => {
+		const channel = z.strictObject({ _id: z.string(), name: z.string() });
+		const storedEffect = z.discriminatedUnion('kind', [
+			z.strictObject({ channel, kind: z.literal('route') }),
+			z.strictObject({ field: z.string(), kind: z.literal('require') })
+		]);
+		const foundEffect = z.discriminatedUnion('kind', [
+			z.strictObject({ channel: channel.optional(), kind: z.literal('route') }),
+			z.strictObject({ field: z.string(), kind: z.literal('require') })
+		]);
+		const policy = z.strictObject({ effect: foundEffect, effects: z.array(foundEffect).optional() });
+		const select = z.strictObject({ effect: storedEffect, effects: z.array(storedEffect) });
+		type Effect = { channel?: undefined | { _id: string, name: string }, kind: 'route' } | { field: string, kind: 'require' };
+		const isTyped: IsEqual<InferType<typeof policy, typeof select>, { effect: Effect, effects?: Effect[] | undefined }> = true;
+		const isUnionTyped: IsEqual<InferType<typeof foundEffect, typeof storedEffect>, Effect> = true;
+
+		assert.ok(isTyped);
+		assert.ok(isUnionTyped);
+	});
+
+	it('leaves an object select as it was', () => {
+		const isTyped: IsEqual<
+			InferType<typeof found, { _id: true, log: { evidence: { type: { _id: true } } }, secret: true }>,
+			{ _id: string, log: { evidence?: undefined | { type: { _id: string } } }[], secret?: string | undefined }
+		> = true;
+
+		assert.ok(isTyped);
+	});
+});

@@ -118,6 +118,24 @@ const user = find([
 }
 ```
 
+A schema select reads as its own shape, but can't promise more than the schema it selects from: a field that schema has optional stays optional, at any depth, however the select schema was built. A field the select schema adds, which the schema doesn't have, reads as the select schema has it.
+
+```ts
+const FoundUserSchema = UserSchema.extend({ email: z.string().optional() });
+
+type FoundUser = InferType<typeof FoundUserSchema, typeof UserSchema>;
+```
+
+```ts
+// FoundUser inferred as:
+{
+	email?: string | undefined;
+	firstName: string;
+	lastName: string;
+	address: { street: string; city: string; state: string; zip: string };
+}
+```
+
 ---
 
 ## 🛠️ Generate Zod Schemas from Zod Selects
