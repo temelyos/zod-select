@@ -3,9 +3,19 @@ import { z, ZodTuple, ZodType, ZodUnion } from 'zod';
 import { RefinedTypeSchema, RefinedUnionSchema, RefineObject, RefineZodTuple, RefineZodUnion } from './refine-schema.js';
 import { DeepMergeAll, IsAny } from './types.js';
 
-/** The declared keys of every variant of `TModel`; an index signature's are left out. */
-// Keys read with `as`: indexing a type that has an index signature by its keys reads only the signature's value
+/**
+ * The declared keys of every variant of `TModel`; an index signature's are left out. Read with `as`: indexing a type
+ * that has an index signature by its keys reads only the signature's value.
+ */
 type DeclaredKeys<TModel> = TModel extends unknown ? keyof { [K in keyof TModel as string extends K ? never : number extends K ? never : symbol extends K ? never : K]: unknown } : never;
+
+/** Whether a value of `TModel` could be read as the select variant `TSelected`: it has every key the select requires. */
+type Fits<TSelected, TModel> = [Exclude<RequiredKeys<TSelected>, keyof TModel>] extends [never] ? true : false;
+
+/** Whether any object variant of the select fits `TModel`, see {@link Fits}. */
+type FitsAny<TSelectedAll, TModel> = TSelectedAll extends readonly unknown[] ? false
+	: TSelectedAll extends object ? [TSelectedAll & TModel] extends [never] ? false : Fits<TSelectedAll, TModel>
+		: false;
 
 export type InferMergedType<
 	T extends ZodType<object> | ZodUnion,
@@ -59,18 +69,18 @@ type KeepFieldsOptional<TSelected, TModel, TAbsent = MaybeAbsentKeys<TSelected, 
  * kept as the select has it. Unbounded, a recursive schema included: each level's values are read lazily, and a
  * recursion comes back to arguments already instantiated.
  */
-type KeepModelOptional<TSelected, TModel> =
+type KeepModelOptional<TSelected, TModel, TSelectedAll = TSelected> =
 	TSelected extends ((...args: never[]) => unknown) | bigint | boolean | null | number | string | symbol | undefined ? TSelected
-		: IsAny<TModel, TSelected, KeepObjectOptional<TSelected, TModel>>;
+		: IsAny<TModel, TSelected, KeepObjectOptional<TSelected, TModel, TSelectedAll>>;
 
 /** {@link KeepModelOptional} for an array, a tuple or an object. */
-type KeepObjectOptional<TSelected, TModel> =
+type KeepObjectOptional<TSelected, TModel, TSelectedAll> =
 	TSelected extends readonly unknown[] ? KeepElementsOptional<TSelected, Extract<TModel, readonly unknown[]>>
 		// An object with methods (a Date, a Map, a class instance) is kept whole: its fields aren't data to pair
 		: TSelected extends object
 			? [Extract<TSelected[keyof TSelected], (...args: never[]) => unknown>] extends [never]
 				? [ModelObjects<TModel>] extends [never] ? TSelected
-					: KeepFieldsOptional<TSelected, VariantsFor<TSelected, ModelObjects<TModel>>>
+					: KeepFieldsOptional<TSelected, VariantsFor<TSelected, ModelObjects<TModel>, TSelectedAll>>
 				: TSelected
 			: TSelected;
 
@@ -111,8 +121,15 @@ type ModelObjects<TModel> = TModel extends ((...args: never[]) => unknown) | rea
 export type MultiSelect<T extends ZodType<object> | ZodUnion> =
 	[ZodSelect<T>, ...ZodSelect<T>[]] | undefined | ZodSelect<T>;
 
-/** Variants that may be read as {@link VariantsFor} pairs them, the rest ruled out by a discriminant. */
-type PairedVariants<TSelected, TModel> = TModel extends unknown ? [TSelected & TModel] extends [never] ? never : TModel : never;
+/**
+ * The variants of `TModel` a select variant may be the read of, as {@link VariantsFor} pairs them: those no discriminant
+ * rules out that have every key it requires, and those no select variant fits, which it may be read from all the same.
+ */
+type PairedVariants<TSelected, TModel, TSelectedAll> = TModel extends unknown
+	? [TSelected & TModel] extends [never] ? never
+		: Fits<TSelected, TModel> extends true ? TModel
+			: true extends FitsAny<TSelectedAll, TModel> ? never : TModel
+	: never;
 
 type PresentFields<TSelected, TAbsent> = { [K in keyof TSelected as K extends TAbsent ? never : K]: unknown };
 
@@ -126,11 +143,11 @@ type UndefinedIn<T> = IsAny<T, never, undefined extends T ? undefined : never>;
 
 /** Per variant of `TModel`: the declared keys of any variant it doesn't have required, and the keys of `TSelected` only its index signature holds. */
 type VariantAbsentKeys<TSelected, TModel, TDeclared> = TModel extends unknown
-	? Exclude<TDeclared, RequiredKeys<TModel>> | (string extends keyof TModel ? Exclude<keyof TSelected, DeclaredKeys<TModel>> : never)
+	? Exclude<TDeclared, RequiredKeys<TModel>> | (string extends keyof TModel ? Exclude<DeclaredKeys<TSelected>, DeclaredKeys<TModel>> : never)
 	: never;
 
-/** The variants of `TModel` a select variant could be read from: those its discriminants allow, or every one when none does. */
-type VariantsFor<TSelected, TModel> = [PairedVariants<TSelected, TModel>] extends [never] ? TModel : PairedVariants<TSelected, TModel>;
+/** The variants of `TModel` a select variant could be read from, or every one when none is paired with it. */
+type VariantsFor<TSelected, TModel, TSelectedAll> = [PairedVariants<TSelected, TModel, TSelectedAll>] extends [never] ? TModel : PairedVariants<TSelected, TModel, TSelectedAll>;
 
 export type ZodSelect<
 	T extends ZodTuple | ZodType<object> | ZodUnion, TIsSimple extends boolean = false

@@ -274,9 +274,11 @@ describe('InferType with a schema select', () => {
 		const loose = z.strictObject({ user: z.looseObject({ _id: z.string() }) });
 		const looseSelect = z.strictObject({ user: z.strictObject({ _id: z.string(), name: z.string() }) });
 		const isLooseTyped: IsEqual<InferType<typeof loose, typeof looseSelect>, { user: { _id: string, name?: string | undefined } }> = true;
+		const isLooseItself: IsEqual<InferType<typeof loose, typeof loose>, z.infer<typeof loose>> = true;
 
 		assert.ok(isTyped);
 		assert.ok(isLooseTyped);
+		assert.ok(isLooseItself);
 	});
 
 	it('makes optional a field a model variant the select could be read from lacks', () => {
@@ -288,6 +290,17 @@ describe('InferType with a schema select', () => {
 
 		assert.ok(isTyped);
 		assert.ok(isDiscriminated);
+	});
+
+	it('pairs a select variant with the model variants that have the keys it requires, when no discriminant tells', () => {
+		const oauth = z.strictObject({ accountName: z.string().optional(), service: z.string(), sub: z.string() });
+		const password = z.strictObject({ hash: z.string(), lockedUntil: z.date().optional() });
+		const model = z.strictObject({ authorizations: z.array(z.union([oauth, password.partial({ hash: true })])) });
+		const select = z.strictObject({ authorizations: z.array(z.union([oauth, password])) });
+		type Authorization = { accountName?: string | undefined, service: string, sub: string } | { hash?: string | undefined, lockedUntil?: Date | undefined };
+		const isTyped: IsEqual<InferType<typeof model, typeof select>, { authorizations: Authorization[] }> = true;
+
+		assert.ok(isTyped);
 	});
 
 	it('keeps undefined that the model allows, an optional nullable and a required field included', () => {
