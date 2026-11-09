@@ -118,6 +118,33 @@ const user = find([
 }
 ```
 
+A schema select reads as its own shape, but can't promise more than the schema it selects from, however the select schema was built. Through nested objects, the elements of arrays and tuples, the values of maps and sets, union variants and recursive schemas, at any depth:
+
+- a field the schema may lack is optional: one it has optional, one only its index signature (a record, a template-literal or number record, or a loose object) holds, or one a union variant the select could be read from doesn't have. A select variant is read from the schema's variants that its discriminant allows and that have every field it requires, and from any variant no select variant fits;
+- a tuple element past those every tuple of the schema has is optional;
+- a value the schema allows `undefined` for keeps `undefined`: a `z.unknown()` or `z.custom()` value may be `undefined`, so it adds it, while a `z.any()` one tells nothing, so it adds nothing;
+- a field no variant of the schema has reads as the select schema has it, and so do branded values and objects that aren't plain data (a `Date`, anything with a method, a class instance with private members), which are kept whole.
+
+`null` isn't carried over: a field the schema has nullable reads as the select schema has it. In generic code, where the schema is a type parameter, the select is read over the schema's constraint.
+
+Merging selects keeps a field optional when it is optional in every select that has it.
+
+```ts
+const FoundUserSchema = UserSchema.extend({ email: z.string().optional() });
+
+type FoundUser = InferType<typeof FoundUserSchema, typeof UserSchema>;
+```
+
+```ts
+// FoundUser inferred as:
+{
+	email?: string | undefined;
+	firstName: string;
+	lastName: string;
+	address: { street: string; city: string; state: string; zip: string };
+}
+```
+
 ---
 
 ## 🛠️ Generate Zod Schemas from Zod Selects
