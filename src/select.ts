@@ -63,7 +63,7 @@ type IsPlainObject<T> = [{ [K in keyof T]: T[K] }] extends [T] ? true : false;
 /** The elements of an array or tuple select, each read over the model's elements at its place. */
 type KeepElementsOptional<TSelected, TModel, TElements = { [I in keyof TSelected]: KeepValue<TSelected[I], ModelElement<TModel, I>> }> =
 	[TModel] extends [never] ? TSelected
-		// Past the elements every model tuple has, the select's are optional
+		// Past the elements every model tuple has, the select's are optional; OptionalFrom stops at the fewest
 		: RequiredCount<TModel> extends RequiredCount<TSelected> ? TElements
 			: TSelected extends unknown[] ? OptionalFrom<TElements, RequiredCount<TModel>>
 				: Readonly<OptionalFrom<TElements, RequiredCount<TModel>>>;
@@ -165,9 +165,11 @@ type PairedVariants<TSelected, TModel, TSelectedAll> = TModel extends unknown
 /** The keys {@link KeepFieldsOptional} keeps as the select has them, with the select's modifiers. */
 type PresentFields<TSelected, TAbsent> = { [K in keyof TSelected as K extends TAbsent ? never : K]: unknown };
 
-/** How many leading elements every array or tuple of `T` has: `0` for an array. */
-type RequiredCount<T, TCount extends unknown[] = []> =
-	[T] extends [readonly [unknown, ...unknown[]]] ? RequiredCount<T extends readonly [unknown, ...infer TRest] ? TRest : never, [...TCount, 0]> : TCount['length'];
+/**
+ * How many leading elements an array or tuple of `T` has: `0` for an array, one count per variant of a union.
+ * (Written by inference: relating `[T]` to a one-tuple of a tuple crashed tsc 7.0.2 on the sdk's types.)
+ */
+type RequiredCount<T, TCount extends unknown[] = []> = T extends readonly [unknown, ...infer TRest] ? RequiredCount<TRest, [...TCount, 0]> : TCount['length'];
 
 /** The element past a tuple's fixed ones, or any element of one without a rest. */
 type RestElement<T extends readonly unknown[]> = TupleRest<T> extends readonly [] ? T[number] : TupleRest<T>[number];

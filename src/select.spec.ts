@@ -404,8 +404,11 @@ describe('InferType with a schema select', () => {
 		interface Item { id: string, secret?: string | undefined }
 		interface StoredItem { id: string, secret: string }
 		const isTyped: IsEqual<InferType<typeof model, typeof select>, { pair: readonly [string, (string | undefined)?], rest: [Item, ...StoredItem[]] }> = true;
+		const either = z.strictObject({ pair: z.union([z.tuple([z.string()]), z.tuple([z.string(), z.string()])]) });
+		const isEitherTyped: IsEqual<InferType<typeof either, z.ZodObject<{ pair: z.ZodTuple<[z.ZodString, z.ZodString], null> }>>, { pair: [string, string?] }> = true;
 
 		assert.ok(isTyped);
+		assert.ok(isEitherTyped);
 	});
 
 	it('keeps a readonly select array readonly', () => {
