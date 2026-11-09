@@ -1,11 +1,11 @@
 import { strict as assert } from 'assert';
 import { describe, it } from 'node:test';
-import { z } from 'zod';
+import { z, ZodType } from 'zod';
 
 import { buildSelectObject } from './build-select-object.js';
 import { refineSchema } from './refine-schema.js';
 import { InferMergedType, InferType, ZodSelect } from './select.js';
-import { IsEqual } from './types.js';
+import { IsEqual, RequiredKeys } from './types.js';
 
 const internalService = z.object({
 	name: z.string(),
@@ -145,7 +145,7 @@ describe('a field whose value is a union of objects', () => {
 	});
 });
 describe('InferMergedType with a tuple', () => {
-	it('merges a field optional on both sides as it does a required one, keeping undefined', () => {
+	it('keeps a field optional on both sides optional', () => {
 		const order = z.strictObject({
 			_id: z.string(),
 			closedAt: z.date().optional(),
@@ -161,9 +161,18 @@ describe('InferMergedType with a tuple', () => {
 
 		const isMerged: IsEqual<
 			{ [K in keyof Merged]: Merged[K] },
-			{ _id: string, closedAt: Date | undefined, lines: undefined | { note: string, sku: string }[], route: undefined | { _id: string, key: string } }
+			{ _id: string, closedAt?: Date | undefined, lines?: undefined | { note: string, sku: string }[], route?: undefined | { _id: string, key: string } }
 		> = true;
 		assert.ok(isMerged);
+	});
+
+	it('makes a field required that one side has required', () => {
+		const order = z.strictObject({ _id: z.string(), closedAt: z.date().optional() });
+		const partial = order.partial({ _id: true });
+		type Merged = InferMergedType<typeof order, [typeof partial, { _id: true }]>;
+		const isRequired: IsEqual<RequiredKeys<Merged>, '_id'> = true;
+
+		assert.ok(isRequired);
 	});
 });
 
@@ -311,7 +320,7 @@ describe('InferType with a schema select', () => {
 		assert.ok(isTyped);
 	});
 
-	it('keeps a branded value and a class instance whole', () => {
+	it('keeps a branded value and a class instance whole, one without methods included', () => {
 		class Money {
 			constructor(readonly amount: number) {}
 
@@ -319,17 +328,100 @@ describe('InferType with a schema select', () => {
 				return this.amount.toFixed(2);
 			}
 		}
-		const model = z.strictObject({ id: z.string(), price: z.strictObject({ amount: z.number().optional() }) });
-		const select = z.strictObject({ id: z.string().brand<'Id'>(), price: z.instanceof(Money) });
-		const isTyped: IsEqual<InferType<typeof model, typeof select>, { id: string & z.BRAND<'Id'>, price: Money }> = true;
+		class Box {
+			#tag = 1;
+			readonly id: string = '';
+
+			get tag(): number {
+				return this.#tag;
+			}
+		}
+		const model = z.strictObject({ box: z.strictObject({ id: z.string().optional() }), id: z.string(), price: z.strictObject({ amount: z.number().optional() }) });
+		const select = z.strictObject({ box: z.instanceof(Box), id: z.string().brand<'Id'>(), price: z.instanceof(Money) });
+		const isTyped: IsEqual<InferType<typeof model, typeof select>, { box: Box, id: string & z.BRAND<'Id'>, price: Money }> = true;
 
 		assert.ok(isTyped);
 	});
 
-	it('merges with an object select', () => {
-		type Merged = InferMergedType<typeof found, [typeof select, { _id: true }]>;
+	it('merges with an object select, the field kept optional', () => {
 		const select = z.strictObject({ secret: z.string() });
-		const isTyped: IsEqual<{ [K in keyof Merged]: Merged[K] }, { _id: string, secret: string | undefined }> = true;
+		type Merged = InferMergedType<typeof found, [typeof select, { _id: true }]>;
+		const isTyped: IsEqual<{ [K in keyof Merged]: Merged[K] }, { _id: string, secret?: string | undefined }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('reads an any field of the select as it is and still walks its siblings, and keeps undefined an unknown model field allows', () => {
+		const model = z.strictObject({ data: z.unknown(), meta: z.any(), note: z.any(), secret: z.string().optional() });
+		const select = z.strictObject({ data: z.string(), meta: z.any(), note: z.string(), secret: z.string() });
+		const isTyped: IsEqual<InferType<typeof model, typeof select>, { data: string | undefined, meta: any, note: string, secret?: string | undefined }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('keeps a usable result in generic code, read over the constraints', () => {
+		function read<T extends ZodType<{ _id: string }>, U extends ZodSelect<T> & ZodType<{ _id: string }>>(row: InferType<T, U>, merged: InferMergedType<T, U>): string[] {
+			const typed: { _id: string } = row;
+
+			return [row._id, typed._id, merged._id];
+		}
+
+		assert.deepEqual(read<typeof found, z.ZodObject<{ _id: z.ZodString }>>({ _id: 'a' }, { _id: 'b' }), ['a', 'a', 'b']);
+	});
+
+	it('walks the values of a map and a set', () => {
+		const item = z.strictObject({ id: z.string(), secret: z.string().optional() });
+		const storedItem = z.strictObject({ id: z.string(), secret: z.string() });
+		const model = z.strictObject({ byId: z.map(z.string(), item), items: z.set(item) });
+		const select = z.strictObject({ byId: z.map(z.string(), storedItem), items: z.set(storedItem) });
+		interface Item { id: string, secret?: string | undefined }
+		const isTyped: IsEqual<InferType<typeof model, typeof select>, { byId: Map<string, Item>, items: Set<Item> }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('makes optional a field only a template-literal or number index signature holds', () => {
+		const model = z.strictObject({ codes: z.record(z.number(), z.string()), headers: z.record(z.templateLiteral(['x-', z.string()]), z.string()) });
+		const select = z.strictObject({ codes: z.strictObject({ 404: z.string() }), headers: z.strictObject({ 'x-trace': z.string() }) });
+		const isTyped: IsEqual<InferType<typeof model, typeof select>, { codes: { 404?: string | undefined }, headers: { 'x-trace'?: string | undefined } }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('walks the values of an index signature in the select', () => {
+		const model = z.strictObject({ tags: z.record(z.string(), z.strictObject({ label: z.string().optional() })) });
+		const select = z.strictObject({ tags: z.record(z.string(), z.strictObject({ label: z.string() })) });
+		const isTyped: IsEqual<InferType<typeof model, typeof select>, { tags: Record<string, { label?: string | undefined }> }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('makes optional a tuple element the model may not have, and reads a rest element over the model\'s rest', () => {
+		const item = z.strictObject({ id: z.string(), secret: z.string().optional() });
+		const storedItem = z.strictObject({ id: z.string(), secret: z.string() });
+		const model = z.strictObject({ pair: z.tuple([z.string(), z.string().optional()]), rest: z.tuple([item], storedItem) });
+		const select = z.strictObject({ pair: z.tuple([z.string(), z.string()]).readonly(), rest: z.tuple([storedItem], storedItem) });
+		interface Item { id: string, secret?: string | undefined }
+		interface StoredItem { id: string, secret: string }
+		const isTyped: IsEqual<InferType<typeof model, typeof select>, { pair: readonly [string, (string | undefined)?], rest: [Item, ...StoredItem[]] }> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('keeps a readonly select array readonly', () => {
+		const select = z.strictObject({ log: stored.shape.log.readonly() });
+		const isTyped: IsEqual<
+			InferType<typeof found, typeof select>['log'],
+			readonly { at: Date, evidence?: undefined | { note: string, type: { _id: string, name: string } } }[]
+		> = true;
+
+		assert.ok(isTyped);
+	});
+
+	it('reads a select variant no model variant can be the read of over every variant', () => {
+		const model = z.strictObject({ value: z.union([z.strictObject({ kind: z.literal('a'), x: z.string().optional() }), z.strictObject({ kind: z.literal('b'), x: z.string() })]) });
+		const select = z.strictObject({ value: z.strictObject({ kind: z.literal('c'), x: z.string() }) });
+		const isTyped: IsEqual<InferType<typeof model, typeof select>, { value: { kind: 'c', x?: string | undefined } }> = true;
 
 		assert.ok(isTyped);
 	});
