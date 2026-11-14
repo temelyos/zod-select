@@ -1,5 +1,6 @@
 import { ZodArray, ZodCatch, ZodDefault, ZodIntersection, ZodLazy, ZodNonOptional, ZodNullable, ZodObject, ZodOptional, ZodPipe, ZodPrefault, ZodRawShape, ZodReadonly, ZodTransform, ZodType, ZodUnion } from 'zod';
 
+import { mergeSelectValue, SelectValue } from './select-object.js';
 import { ZodSelect } from './select.js';
 import { getInnerType, isZodArray, isZodObject, isZodUnion, unwrapWrapper } from './utilities.js';
 
@@ -26,10 +27,6 @@ type MergeSelectAll<T> = [T] extends [never] ? never
 type NotObject<T> = T extends unknown ? Unwrap<T> extends ZodObject<any, any> ? never : T : never;
 
 type ObjectSelectAll<TShape extends ZodRawShape, TDepth extends number> = { [K in keyof TShape]-?: FieldSelectAll<TShape[K], TDepth> };
-
-interface SelectObject { [key: string]: SelectObject | true }
-
-type SelectValue = SelectObject | true;
 
 type Unwrap<T> = T extends ZodCatch<infer I> | ZodDefault<infer I> | ZodNonOptional<infer I> | ZodNullable<infer I> | ZodOptional<infer I> | ZodPrefault<infer I> | ZodReadonly<infer I>
 	? Unwrap<I>
@@ -129,21 +126,4 @@ function collectKeys(schema: ZodType, result: Record<string, SelectValue>, depth
 
 function isUnionOfObjects(schema: ZodType): boolean {
 	return isZodUnion(schema) && schema.options.every(option => isZodObject(unwrapField(option)));
-}
-
-/** Two variants' selects of one key: `true` if either is, as sub-fields would miss a plain value; else their keys merged. */
-function mergeSelectValue(a: SelectValue, b: SelectValue): SelectValue {
-	if ((a === true) || (b === true)) {
-		return true;
-	}
-
-	const merged: SelectObject = { ...a };
-
-	for (const [key, value] of Object.entries(b)) {
-		const existing = merged[key];
-
-		merged[key] = (existing === undefined) ? value : mergeSelectValue(existing, value);
-	}
-
-	return merged;
 }

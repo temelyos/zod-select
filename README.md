@@ -214,6 +214,43 @@ const schema = refineSchema(UserSchema, {
 
 ---
 
+## ✂️ Strip What a Merge Added
+
+A function that needs more than its caller asked for merges its own fields into the select with `mergeSelect`. `stripSelect` hands the value back as the caller's select alone reads it:
+
+```ts
+function createUser<T extends MultiSelect<typeof UserSchema> = undefined>(select?: T): InferMergedType<typeof UserSchema, T> {
+	const added = { email: true };
+	const user = insert(mergeSelect(UserSchema, added, select));
+
+	// `email` is typed and present, whatever the caller selected
+	sendWelcome(user.email);
+
+	return stripSelect({ added, schema: UserSchema, select, value: user });
+}
+
+const user = createUser({ firstName: true });
+```
+
+```ts
+// user inferred as:
+{
+	firstName: string;
+}
+```
+
+- What `added` selected beyond `select` is removed, at any depth and in each element of an array. Here that is `email`.
+- What neither select names is left as it is, such as an id a read always returns.
+- A field `added` selected whole and `select` in part is left with that part alone, whatever else it held.
+- With no `select`, or the model itself as one (`schema`, the same instance), the whole model was asked for, so nothing is removed.
+- A schema select names the fields it declares. What it can't pick into is selected whole: a record, a loose object, a tuple, a transform, a union with a member that isn't an object, and a schema where it holds itself.
+- An object that isn't plain data, such as a class instance, is left whole.
+- The value passed in is never changed.
+
+Pass `select` as the caller gave it, never the merged select: merged, it names what was added too, so nothing is removed.
+
+---
+
 ## 🧵 Putting it all together
 
 Combining all methods and types together you can build powerful, type-safe selection and inference using the zod schemas you already have.
