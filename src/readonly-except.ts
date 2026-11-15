@@ -13,7 +13,7 @@ type DeepReadonlyOf<T> =
 /** The keys of `T`'s index signature that `TSelect` names, none for a `T` without one. */
 type IndexSelected<T, TSelect> = string extends keyof T
 	? { -readonly [K in Exclude<WholeKeys<TSelect>, DeclaredKeys<T>>]: T[string & keyof T] }
-	& { readonly [K in Exclude<keyof TSelect, DeclaredKeys<T> | WholeKeys<TSelect>>]: SelectWritable<T[string & keyof T], TSelect[K]> }
+	& { readonly [K in Exclude<keyof TSelect, DeclaredKeys<T> | WholeKeys<TSelect>>]: ReadonlyExcept<T[string & keyof T], TSelect[K]> }
 	: unknown;
 
 /** What has no keys to be read-only, or whose setters the types can't take away. */
@@ -25,11 +25,27 @@ type Leaf = ((...args: never[]) => unknown) | bigint | boolean | Date | null | n
  */
 export type PlainSelect = boolean | { readonly [key: string]: PlainSelect | undefined };
 
+/**
+ * `T` writable where `TSelect` selects it and read-only everywhere else: a key selected `true` is writable all the way
+ * down; a key selected by the keys within it is itself read-only, and writable only where those select. A select of an
+ * array is a select of each of its elements: the array itself is writable only selected `true`. A field typed `any` or
+ * `unknown` stays so: only {@link readonlyExcept} refuses a write through it.
+ */
+export type ReadonlyExcept<T, TSelect> = unknown extends T ? T : ReadonlyExceptOf<T, TSelect>;
+
+type ReadonlyExceptOf<T, TSelect> =
+	TSelect extends true ? T
+		: TSelect extends object
+			? T extends Leaf ? T
+				: T extends readonly unknown[] ? { readonly [K in keyof T]: ReadonlyExcept<T[K], TSelect> }
+					: IndexSelected<T, TSelect> & SelectedWhole<T, TSelect> & SelectedWithin<T, TSelect>
+			: DeepReadonly<T>;
+
 /** The keys of `T` that `TSelect` selects whole, writable all the way down. */
 type SelectedWhole<T, TSelect> = { -readonly [K in keyof T as K extends WholeKeys<TSelect> ? K : never]: T[K] };
 
 /** The other keys of `T`: read-only, and writable within only where `TSelect` selects keys within them. */
-type SelectedWithin<T, TSelect> = { readonly [K in keyof T as K extends WholeKeys<TSelect> ? never : K]: K extends keyof TSelect ? SelectWritable<T[K], TSelect[K]> : DeepReadonly<T[K]> };
+type SelectedWithin<T, TSelect> = { readonly [K in keyof T as K extends WholeKeys<TSelect> ? never : K]: K extends keyof TSelect ? ReadonlyExcept<T[K], TSelect[K]> : DeepReadonly<T[K]> };
 
 /** The selects of a `T`: of its keys, at any depth, each key's of each element of an array it holds. */
 export type SelectOf<T> = unknown extends T ? PlainSelect : SelectOfValue<T>;
@@ -39,30 +55,14 @@ type SelectOfValue<T> =
 		: T extends readonly (infer E)[] ? SelectOf<E>
 			: boolean | { readonly [K in keyof T]?: SelectOf<Exclude<T[K], null | undefined>> };
 
-/**
- * `T` writable where `TSelect` selects it and read-only everywhere else: a key selected `true` is writable all the way
- * down; a key selected by the keys within it is itself read-only, and writable only where those select. A select of an
- * array is a select of each of its elements: the array itself is writable only selected `true`. A field typed `any` or
- * `unknown` stays so: only {@link selectWritable} refuses a write through it.
- */
-export type SelectWritable<T, TSelect> = unknown extends T ? T : SelectWritableOf<T, TSelect>;
-
-type SelectWritableOf<T, TSelect> =
-	TSelect extends true ? T
-		: TSelect extends object
-			? T extends Leaf ? T
-				: T extends readonly unknown[] ? { readonly [K in keyof T]: SelectWritable<T[K], TSelect> }
-					: IndexSelected<T, TSelect> & SelectedWhole<T, TSelect> & SelectedWithin<T, TSelect>
-			: DeepReadonly<T>;
-
 /** The keys `TSelect` selects whole. */
 type WholeKeys<TSelect> = { [K in keyof TSelect]: TSelect[K] extends true ? K : never }[keyof TSelect];
 
-/** A write `selectWritable` refused: at `path`, which its select doesn't select. */
-export class SelectWriteError extends TypeError {
+/** A write `readonlyExcept` refused: at `path`, which its select doesn't select. */
+export class ReadonlyPathError extends TypeError {
 	constructor(readonly path: string) {
 		super(path ? `'${path}' is not selected to be written.` : 'The value itself is not selected to be written.');
-		this.name = 'SelectWriteError';
+		this.name = 'ReadonlyPathError';
 	}
 }
 
@@ -74,7 +74,7 @@ const views = new WeakMap<object, Map<PlainSelect | undefined, Map<string, objec
 
 function dateHandler(path: string): ProxyHandler<Date> {
 	const refuse = (): never => {
-		throw new SelectWriteError(path);
+		throw new ReadonlyPathError(path);
 	};
 
 	return {
@@ -137,7 +137,7 @@ function objectHandler(select: PlainSelect | undefined, path: string, isArray: b
 	};
 	const isWritable = (key: string | symbol): boolean => (select === true || (!isArray && selectOf(key) === true));
 	const refuse = (key: string | symbol): never => {
-		throw new SelectWriteError(pathOf(path, String(key)));
+		throw new ReadonlyPathError(pathOf(path, String(key)));
 	};
 	const read = (target: object, key: string | symbol, value: unknown): unknown => {
 		const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
@@ -167,6 +167,18 @@ function pathOf(path: string, key: string): string {
 	return path && key ? `${path}.${key}` : path || key;
 }
 
+/**
+ * `value` as `select` allows it written: through a view that writes into `value` where `select` selects it, and
+ * refuses with a {@link ReadonlyPathError} a write anywhere else: setting, deleting or defining a key, changing an array
+ * not selected whole, changing a prototype or freezing, or calling a `Date`'s setter. Reads go through as views, so a
+ * view written into a key is written as the value it views. A class instance other than a `Date`, such as a `Map` or a
+ * `Buffer`, is handed out as it is, and so is a property frozen in `value`.
+ */
+export function readonlyExcept<T extends object, const TSelect extends SelectOf<T>>(value: T, select: TSelect): ReadonlyExcept<T, TSelect> {
+	// `SelectOf<T>` is a `PlainSelect` for every `T`; the compiler can't see it for a `T` not yet known.
+	return viewOf(value, select as PlainSelect, '') as ReadonlyExcept<T, TSelect>;
+}
+
 /** The select `select` gives `key`: of its own keys only, so a key named as an `Object.prototype` member selects nothing. */
 function selectAt(select: PlainSelect | undefined, key: string): PlainSelect | undefined {
 	if (select === true) return true;
@@ -192,18 +204,6 @@ export function selectsOverlap(a: PlainSelect, b: PlainSelect): boolean {
 
 		return mine !== undefined && theirs !== undefined && selectsOverlap(mine, theirs);
 	});
-}
-
-/**
- * `value` as `select` allows it written: through a view that writes into `value` where `select` selects it, and
- * refuses with a {@link SelectWriteError} a write anywhere else: setting, deleting or defining a key, changing an array
- * not selected whole, changing a prototype or freezing, or calling a `Date`'s setter. Reads go through as views, so a
- * view written into a key is written as the value it views. A class instance other than a `Date`, such as a `Map` or a
- * `Buffer`, is handed out as it is, and so is a property frozen in `value`.
- */
-export function selectWritable<T extends object, const TSelect extends SelectOf<T>>(value: T, select: TSelect): SelectWritable<T, TSelect> {
-	// `SelectOf<T>` is a `PlainSelect` for every `T`; the compiler can't see it for a `T` not yet known.
-	return viewOf(value, select as PlainSelect, '') as SelectWritable<T, TSelect>;
 }
 
 /** `value` with each view in it, at any depth, replaced by what it views: a copy where it held one, else `value` itself. */

@@ -251,18 +251,18 @@ Pass `select` as the caller gave it, never the merged select: merged, it names w
 
 ---
 
-## 🔒 Write Only What a Select Names
+## 🔒 Read-Only Except What a Select Names
 
-`selectWritable` hands out a value as a select allows it written. It writes into the value where the select names it, and refuses a write anywhere else, in the types and at runtime, with a `SelectWriteError` naming the path:
+`readonlyExcept` hands out a value read-only, except where a select names it. It writes into the value where the select names it, and refuses a write anywhere else, in the types and at runtime, with a `ReadonlyPathError` naming the path:
 
 ```ts
-const customer = selectWritable(stored, { address: { location: true }, notes: true });
+const customer = readonlyExcept(stored, { address: { location: true }, notes: true });
 
 customer.address.location = { lat: 45.76, lng: 4.84 };   // written into `stored`
 customer.notes = 'Geocoded';                             // written into `stored`
 
-customer.name = 'Acme Ltd';         // type error, and throws SelectWriteError: 'name'
-customer.address.city = 'Paris';    // type error, and throws SelectWriteError: 'address.city'
+customer.name = 'Acme Ltd';         // type error, and throws ReadonlyPathError: 'name'
+customer.address.city = 'Paris';    // type error, and throws ReadonlyPathError: 'address.city'
 ```
 
 - A key selected `true` is writable all the way down: it can be replaced, written within, deleted or defined.
@@ -276,7 +276,7 @@ What it doesn't guard:
 
 - A class instance other than a `Date`, such as a `Map` or a `Buffer`, is handed out as it is.
 - A property frozen in the value is handed out as it is, as a proxy must.
-- `SelectWritable<T, TSelect>` is the type it returns, and `DeepReadonly<T>` the type of what isn't selected. A field typed `any` or `unknown` stays so in the types; only the runtime view refuses a write through it. Being read-only, a part that isn't selected can't be passed where its mutable type is expected.
+- `ReadonlyExcept<T, TSelect>` is the type it returns, and `DeepReadonly<T>` the type of what isn't selected. A field typed `any` or `unknown` stays so in the types; only the runtime view refuses a write through it. Being read-only, a part that isn't selected can't be passed where its mutable type is expected.
 
 Two helpers compare selects without a value:
 

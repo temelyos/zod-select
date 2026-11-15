@@ -1,7 +1,7 @@
 import { strict as assert } from 'assert';
 import { describe, it } from 'node:test';
 
-import { DeepReadonly, isPathSelected, selectsOverlap, SelectWritable, selectWritable, SelectWriteError } from './select-writable.js';
+import { DeepReadonly, isPathSelected, ReadonlyExcept, readonlyExcept, ReadonlyPathError, selectsOverlap } from './readonly-except.js';
 import { IsEqual } from './types.js';
 
 interface Address { city: string, country: string, location?: { lat: number, lng: number } }
@@ -35,7 +35,7 @@ function customer(): Customer {
 }
 
 function refused(path: string) {
-	return (error: unknown) => error instanceof SelectWriteError && error.path === path;
+	return (error: unknown) => error instanceof ReadonlyPathError && error.path === path;
 }
 
 describe('selectsOverlap()', () => {
@@ -108,10 +108,10 @@ describe('isPathSelected()', () => {
 	});
 });
 
-describe('selectWritable()', () => {
+describe('readonlyExcept()', () => {
 	it('should write into the value where the select selects it, at any depth', () => {
 		const value = customer();
-		const view = selectWritable(value, { address: { location: true }, notes: true });
+		const view = readonlyExcept(value, { address: { location: true }, notes: true });
 
 		view.address.location = geocoded;
 		view.notes = 'Geocoded';
@@ -122,7 +122,7 @@ describe('selectWritable()', () => {
 
 	it('should write anywhere below a key selected whole: replacing it, within it, or deleting or defining it', () => {
 		const value = customer();
-		const view = selectWritable(value, { address: true, notes: true, tags: true });
+		const view = readonlyExcept(value, { address: true, notes: true, tags: true });
 
 		view.address.city = 'Paris';
 		assert.equal(value.address.city, 'Paris');
@@ -142,7 +142,7 @@ describe('selectWritable()', () => {
 
 	it('should refuse setting, deleting or defining a key it doesn\'t select, naming its path, and leave the value as it was', () => {
 		const value = customer();
-		const view = selectWritable(value, { address: { location: true } });
+		const view = readonlyExcept(value, { address: { location: true } });
 
 		assert.throws(() => Reflect.set(view, 'name', 'Acme Ltd'), refused('name'));
 		assert.throws(() => Reflect.deleteProperty(view, 'tags'), refused('tags'));
@@ -155,7 +155,7 @@ describe('selectWritable()', () => {
 
 	it('should hand out what it doesn\'t select read-only all the way down', () => {
 		const value = customer();
-		const view = selectWritable(value, { notes: true });
+		const view = readonlyExcept(value, { notes: true });
 
 		assert.throws(() => Reflect.set(view.address, 'city', 'Paris'), refused('address.city'));
 		assert.throws(() => (view.tags as string[]).push('partner'), refused('tags.1'));
@@ -166,12 +166,12 @@ describe('selectWritable()', () => {
 
 	it('should refuse a change made through a descriptor, a prototype or a freeze, and leave the value extensible', () => {
 		const value = customer();
-		const view = selectWritable(value, { notes: true });
+		const view = readonlyExcept(value, { notes: true });
 
 		assert.throws(() => Reflect.set(Object.getOwnPropertyDescriptor(view, 'address')!.value as Address, 'country', 'DE'), refused('address.country'));
 		assert.throws(() => Object.setPrototypeOf(view.address, null), refused('address'));
 		assert.throws(() => Object.freeze(view.address), refused('address'));
-		assert.throws(() => Object.preventExtensions(view), (error: unknown) => error instanceof SelectWriteError && error.path === '');
+		assert.throws(() => Object.preventExtensions(view), (error: unknown) => error instanceof ReadonlyPathError && error.path === '');
 
 		assert.equal(value.address.country, 'FR');
 		assert.equal(Object.isExtensible(value.address), true);
@@ -180,7 +180,7 @@ describe('selectWritable()', () => {
 
 	it('should read a select of an array as a select of each element, and the array itself as written only selected whole', () => {
 		const value = customer();
-		const view = selectWritable(value, { lines: { amount: true } });
+		const view = readonlyExcept(value, { lines: { amount: true } });
 
 		for (const line of view.lines) line.amount *= 2;
 
@@ -189,13 +189,13 @@ describe('selectWritable()', () => {
 		assert.throws(() => Reflect.set(view.lines, 0, { amount: 1, item: 'Tea' }), refused('lines.0'));
 		assert.throws(() => Reflect.set(view.lines[0]!, 'item', 'Tea'), refused('lines.0.item'));
 		assert.throws(() => (view.lines as Line[]).reverse(), refused('lines.0'));
-		assert.throws(() => (view.lines as Line[]).splice(0, 1), (error: unknown) => error instanceof SelectWriteError);
+		assert.throws(() => (view.lines as Line[]).splice(0, 1), (error: unknown) => error instanceof ReadonlyPathError);
 		assert.deepEqual(value.lines.map(line => line.item), ['Soup', 'Cake']);
 	});
 
 	it('should write a view written into a selected key as the value it views, so the stored value holds no view', () => {
 		const value = customer();
-		const view = selectWritable(value, { billing: true, tags: true });
+		const view = readonlyExcept(value, { billing: true, tags: true });
 
 		view.billing = view.address;
 		view.tags.push(view.lines[0]!.item);
@@ -203,7 +203,7 @@ describe('selectWritable()', () => {
 		assert.equal(value.billing, value.address);
 		assert.deepEqual(structuredClone(value).billing, stored.address);
 
-		const next = selectWritable(value, { billing: true });
+		const next = readonlyExcept(value, { billing: true });
 
 		next.billing!.city = 'Paris';
 		assert.equal(value.address.city, 'Paris');
@@ -211,7 +211,7 @@ describe('selectWritable()', () => {
 
 	it('should write a view nested in a new value as the value it views, through a key selected whole', () => {
 		const value = customer();
-		const view = selectWritable(value, { billing: true });
+		const view = readonlyExcept(value, { billing: true });
 
 		view.billing = { ...view.address, location: view.address.location ?? geocoded };
 		assert.doesNotThrow(() => structuredClone(value));
@@ -219,7 +219,7 @@ describe('selectWritable()', () => {
 
 	it('should read what it doesn\'t select as it is stored, through one view per path', () => {
 		const value = customer();
-		const view = selectWritable(value, { notes: true });
+		const view = readonlyExcept(value, { notes: true });
 
 		assert.notEqual(view.address, value.address);
 		assert.deepEqual(view.address, stored.address);
@@ -229,7 +229,7 @@ describe('selectWritable()', () => {
 
 	it('should name the path a value was reached by, when it is reached by two', () => {
 		const value = customer();
-		const view = selectWritable(Object.assign(value, { billing: value.address }), { notes: true });
+		const view = readonlyExcept(Object.assign(value, { billing: value.address }), { notes: true });
 
 		assert.throws(() => Reflect.set(view.billing!, 'city', 'Paris'), refused('billing.city'));
 		assert.throws(() => Reflect.set(view.address, 'city', 'Paris'), refused('address.city'));
@@ -237,7 +237,7 @@ describe('selectWritable()', () => {
 
 	it('should read a date it doesn\'t select as itself, refusing its setters, and write a date it selects whole', () => {
 		const value = customer();
-		const view = selectWritable(value, { notes: true });
+		const view = readonlyExcept(value, { notes: true });
 
 		assert.equal(view.createdAt.getTime(), SIGNED_UP_AT);
 		assert.equal(view.createdAt.toISOString(), stored.createdAt.toISOString());
@@ -246,13 +246,13 @@ describe('selectWritable()', () => {
 		assert.throws(() => view.createdAt.setUTCFullYear(1999), refused('createdAt'));
 		assert.equal(value.createdAt.getTime(), SIGNED_UP_AT);
 
-		selectWritable(value, { createdAt: true }).createdAt.setUTCFullYear(1999);
+		readonlyExcept(value, { createdAt: true }).createdAt.setUTCFullYear(1999);
 		assert.equal(value.createdAt.getUTCFullYear(), 1999);
 	});
 
 	it('should read a frozen value as it is, where a view of it would break the proxy', () => {
 		const frozen = Object.freeze({ address: Object.freeze({ ...stored.address }), notes: 'Frozen' });
-		const view = selectWritable(frozen, { notes: true });
+		const view = readonlyExcept(frozen, { notes: true });
 
 		assert.equal(view.address, frozen.address);
 		assert.equal(view.notes, 'Frozen');
@@ -260,7 +260,7 @@ describe('selectWritable()', () => {
 
 	it('should write through a select of the whole value, keeping views out of it', () => {
 		const value = customer();
-		const view = selectWritable(value, true);
+		const view = readonlyExcept(value, true);
 
 		view.name = 'Acme Ltd';
 		view.billing = view.address;
@@ -272,14 +272,14 @@ describe('selectWritable()', () => {
 	it('should refuse every write through a select of nothing', () => {
 		const value = customer();
 
-		assert.throws(() => Reflect.set(selectWritable(value, false), 'name', 'x'), refused('name'));
-		assert.throws(() => Reflect.set(selectWritable(value, {}), 'name', 'x'), refused('name'));
+		assert.throws(() => Reflect.set(readonlyExcept(value, false), 'name', 'x'), refused('name'));
+		assert.throws(() => Reflect.set(readonlyExcept(value, {}), 'name', 'x'), refused('name'));
 	});
 });
 
-describe('SelectWritable', () => {
+describe('ReadonlyExcept', () => {
 	it('should type the keys a select selects whole as writable, all the way down', () => {
-		type Writable = SelectWritable<Customer, { notes: true, tags: true }>;
+		type Writable = ReadonlyExcept<Customer, { notes: true, tags: true }>;
 
 		const isNotesWritable: IsEqual<Pick<Writable, 'notes'>, { notes?: string }> = true;
 		const isTagsWritable: IsEqual<Pick<Writable, 'tags'>, { tags: string[] }> = true;
@@ -289,7 +289,7 @@ describe('SelectWritable', () => {
 	});
 
 	it('should type everything else read-only, and a key selected by keys within it read-only but for those', () => {
-		const view = selectWritable(customer(), { address: { location: true }, lines: { amount: true } });
+		const view = readonlyExcept(customer(), { address: { location: true }, lines: { amount: true } });
 
 		view.address.location = geocoded;
 		for (const line of view.lines) line.amount += 1;
@@ -325,14 +325,14 @@ describe('SelectWritable', () => {
 		const value = customer();
 
 		// @ts-expect-error a misspelled key
-		assert.ok(selectWritable(value, { nmae: true }));
+		assert.ok(readonlyExcept(value, { nmae: true }));
 		// @ts-expect-error a key the nested value doesn't have
-		assert.ok(selectWritable(value, { address: { street: true } }));
+		assert.ok(readonlyExcept(value, { address: { street: true } }));
 	});
 
 	it('should keep a field typed `any` or `unknown` as it is, and an unselected date as a date', () => {
-		const isAny: IsEqual<SelectWritable<{ data: any }, { name: true }>['data'], any> = true;
-		const isUnknown: IsEqual<SelectWritable<{ data: unknown }, { name: true }>['data'], unknown> = true;
+		const isAny: IsEqual<ReadonlyExcept<{ data: any }, { name: true }>['data'], any> = true;
+		const isUnknown: IsEqual<ReadonlyExcept<{ data: unknown }, { name: true }>['data'], unknown> = true;
 		const isDate: IsEqual<DeepReadonly<Date>, Date> = true;
 
 		assert.ok(isAny);
@@ -348,7 +348,7 @@ describe('SelectWritable', () => {
 
 	it('should type a key a select names under an index signature as the select has it', () => {
 		const counts: Record<string, Record<string, number>> = { byDay: { mon: 1 }, byYear: { 2024: 3 } };
-		const view = selectWritable(counts, { byDay: true, byYear: { 2024: true } });
+		const view = readonlyExcept(counts, { byDay: true, byYear: { 2024: true } });
 
 		view.byDay = { tue: 2 };
 		view.byYear['2024'] = 4;
@@ -358,7 +358,7 @@ describe('SelectWritable', () => {
 
 	it('should type a union by each variant, and an optional value as optional', () => {
 		type Party = { kind: 'company', taxId: string } | { kind: 'person', name: string };
-		type Writable = SelectWritable<{ party: Party, previous?: Address | null }, { party: true, previous: { city: true } }>;
+		type Writable = ReadonlyExcept<{ party: Party, previous?: Address | null }, { party: true, previous: { city: true } }>;
 
 		const isParty: IsEqual<Writable['party'], Party> = true;
 		const isOptional: IsEqual<undefined extends Writable['previous'] ? true : false, true> = true;
