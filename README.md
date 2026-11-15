@@ -251,6 +251,45 @@ Pass `select` as the caller gave it, never the merged select: merged, it names w
 
 ---
 
+## 🔒 Write Only What a Select Names
+
+`selectWritable` hands out a value as a select allows it written. It writes into the value where the select names it, and refuses a write anywhere else, in the types and at runtime, with a `SelectWriteError` naming the path:
+
+```ts
+const customer = selectWritable(stored, { address: { location: true }, notes: true });
+
+customer.address.location = { lat: 45.76, lng: 4.84 };   // written into `stored`
+customer.notes = 'Geocoded';                             // written into `stored`
+
+customer.name = 'Acme Ltd';         // type error, and throws SelectWriteError: 'name'
+customer.address.city = 'Paris';    // type error, and throws SelectWriteError: 'address.city'
+```
+
+- A key selected `true` is writable all the way down: it can be replaced, written within, deleted or defined.
+- A key selected by the keys within it is itself read-only, and writable only where those keys select. A key selected `false`, or left out, isn't selected.
+- A select of an array is a select of each element. `{ lines: { amount: true } }` lets each line's `amount` be written, but adding, removing or reordering lines needs `lines: true`.
+- The select is checked against the value's type, so a misspelled key doesn't compile.
+- What the select doesn't name reads as stored, through read-only views: a write through one, through its property descriptor, a change of its prototype or a freeze is refused. A `Date` it doesn't name reads as itself, and its setters throw.
+- A view written into a selected key is written as the value it views, so the value never holds a view.
+
+What it doesn't guard:
+
+- A class instance other than a `Date`, such as a `Map` or a `Buffer`, is handed out as it is.
+- A property frozen in the value is handed out as it is, as a proxy must.
+- `SelectWritable<T, TSelect>` is the type it returns, and `DeepReadonly<T>` the type of what isn't selected. A field typed `any` or `unknown` stays so in the types; only the runtime view refuses a write through it. Being read-only, a part that isn't selected can't be passed where its mutable type is expected.
+
+Two helpers compare selects without a value:
+
+```ts
+selectsOverlap({ address: true }, { address: { country: true } });             // true: replacing the address may change the country
+selectsOverlap({ address: { location: true } }, { address: { country: true } }); // false
+
+isPathSelected({ lines: { amount: true } }, 'lines.$[].amount');   // true: an array's index and positional segments are skipped
+isPathSelected({ address: { location: true } }, 'address');         // false: the whole address isn't selected
+```
+
+---
+
 ## 🧵 Putting it all together
 
 Combining all methods and types together you can build powerful, type-safe selection and inference using the zod schemas you already have.
